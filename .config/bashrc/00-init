@@ -5,5 +5,5 @@
 # -----------------------------------------------------
 # Exports
 # -----------------------------------------------------
-export EDITOR=nvim
+export EDITOR=windsurf
 export PATH="/usr/lib/ccache/bin/:$PATH"
