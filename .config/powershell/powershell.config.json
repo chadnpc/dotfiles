@@ -1,5 +1,5 @@
 {
   "Microsoft.PowerShell:ExecutionPolicy": "Unrestricted",
   "UseZoxide": true,
-  "UseOmp": true
+  "UseOmp": false
 }
