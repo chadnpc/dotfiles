@@ -35,3 +35,5 @@ done
 if [ -f ~/.bashrc_custom ] ;then
     source ~/.bashrc_custom
 fi
+export PATH="$PATH:/home/alain/.local/share/fount/path"
+. "/home/alain/.deno/env"
