@@ -77,6 +77,13 @@ function lt { eza -a --tree --level=1 --icons=always }
 function which ($command) {
   return (Get-Command -Name $command -ErrorAction SilentlyContinue).Path
 }
+function Edit-Profileconfig {
+  nvim (Get-Item $PROFILE | Select-Object -expand Directory | Join-Path -ChildPath powershell.config.json)
+}
+function Edit-Profile {
+  nvim $PROFILE
+}
+
 function Show-fzfPreview {
   [CmdletBinding()]
   [Alias('fz')]
