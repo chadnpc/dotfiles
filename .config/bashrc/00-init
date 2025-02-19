@@ -7,3 +7,4 @@
 # -----------------------------------------------------
 export EDITOR=windsurf
 export PATH="/usr/lib/ccache/bin/:$PATH"
+export PATH="$PATH:/home/alain/.dotnet/tools"
