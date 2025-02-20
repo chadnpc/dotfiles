@@ -43,8 +43,11 @@ Set-Env PATH -Scope Machine -Value ([string]::Join([IO.Path]::PathSeparator, ${e
 
 # ----- Aliases -----
 Set-Alias v nvim
+Set-Alias l Get-ChildItem
 Set-Alias ls Get-ChildItem
 Set-Alias g git
+Set-Alias lg lazygit
+Set-Alias ld lazydocker
 Set-Alias code windsurf
 Set-Alias fetch fastfetch
 Set-Alias c clear
