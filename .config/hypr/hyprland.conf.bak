@@ -317,7 +317,6 @@ bind = SUPER_SHIFT, E, exec, $editor
 bind = SUPER_SHIFT, W, exec, $browser
 
 # -- Rofi --
-bindr = SUPER, SUPER_L, exec, $rofi_launcher
 bind  = SUPER, D,       exec, $rofi_launcher
 bind  = SUPER, R,       exec, $rofi_runner
 bind  = SUPER, M,       exec, $rofi_music

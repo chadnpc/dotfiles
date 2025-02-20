@@ -1,1 +1,1 @@
-paru
+yay
