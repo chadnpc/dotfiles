@@ -222,4 +222,7 @@ if ($config.UseZoxide) {
 if ($config.UseOmp) {
   [IO.File]::Exists($omp_config) ? [ScriptBlock]::Create([string]::join("`n", @(& oh-my-posh init powershell --config="$omp_config" --print))).Invoke() : (Write-Warning "Cannot find $omp_config!")
 }
-$VerbosePreference = "continue"
+$VerbosePreference = "Continue"
+if ([IO.Path]::Exists('/home/alain/.pyenv/bin')) { cliHelper.env\Set-Env -Name PATH -Scope 'Machine' -Value ('{0}{1}{2}' -f $env:PATH, [IO.Path]::PathSeparator, '/home/alain/.pyenv/bin') }
+
+if (![bool](Get-Command pipenv -ea Ignore)) { Set-Alias pipenv pipEnv\Invoke-PipEnv -Scope Global }
