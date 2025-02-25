@@ -6,9 +6,12 @@
 
 $omp_config = "$PSScriptRoot/alain.omp.json"
 $pwshconfig = "$PSScriptRoot/powershell.config.json"
-if ([IO.File]::Exists($pwshconfig)) {
-  $config = [IO.File]::ReadAllText($pwshconfig) | ConvertFrom-Json
-}
+$local:_cfg = $(if ([IO.File]::Exists($pwshconfig)) {
+    [IO.File]::ReadAllText($pwshconfig) | ConvertFrom-Json
+  } else {
+    [PsObject]::new()
+  }
+)
 
 # ReadLine suggestions
 Enable-PowerType
@@ -215,14 +218,16 @@ function Invoke-Recorder {
   }
 }
 
-if ($config.UseZoxide) {
+if ($_cfg.UseZoxide) {
   [ScriptBlock]::Create([string]::join("`n", @(& zoxide init powershell))).Invoke()
 }
 
-if ($config.UseOmp) {
+if ($_cfg.UseOmp) {
   [IO.File]::Exists($omp_config) ? [ScriptBlock]::Create([string]::join("`n", @(& oh-my-posh init powershell --config="$omp_config" --print))).Invoke() : (Write-Warning "Cannot find $omp_config!")
 }
+Remove-Variable _cfg -Scope Local
 $VerbosePreference = "Continue"
+
 if ([IO.Path]::Exists('/home/alain/.pyenv/bin')) { cliHelper.env\Set-Env -Name PATH -Scope 'Machine' -Value ('{0}{1}{2}' -f $env:PATH, [IO.Path]::PathSeparator, '/home/alain/.pyenv/bin') }
 
 if (![bool](Get-Command pipenv -ea Ignore)) { Set-Alias pipenv pipEnv\Invoke-PipEnv -Scope Global }
