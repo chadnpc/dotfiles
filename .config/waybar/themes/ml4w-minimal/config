@@ -56,7 +56,7 @@
 
     // Modules Left
     "modules-left": [
-        "custom/appmenuicon",
+"custom/appmenuicon",
         "hyprland/workspaces",
         "group/links",
         "group/quicklinks",
@@ -75,13 +75,14 @@
         "pulseaudio",
 "backlight",
         "bluetooth",
-        "battery", 
 "network",
+        "battery", 
+        "power-profiles-daemon",
         "group/hardware",
         "group/tools",
         "custom/exit",
         "clock",
-        "tray",
+"tray",
         "custom/notification",
         "custom/ml4w-welcome"
     ]
