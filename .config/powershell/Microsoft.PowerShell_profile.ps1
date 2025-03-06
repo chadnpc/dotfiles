@@ -232,18 +232,7 @@ if ([IO.Path]::Exists('/home/alain/.pyenv/bin')) { cliHelper.env\Set-Env -Name P
 
 if (![bool](Get-Command pipenv -ea Ignore)) { Set-Alias pipenv pipEnv\Invoke-PipEnv -Scope Global }
 
-if (![bool](Get-Command pipenv -ea Ignore)) { Set-Alias pipenv pipEnv\Invoke-PipEnv -Scope Global }
-
-if (![bool](Get-Command pipenv -ea Ignore)) { Set-Alias pipenv pipEnv\Invoke-PipEnv -Scope Global }
-
-if (![bool](Get-Command pipenv -ea Ignore)) { Set-Alias pipenv pipEnv\Invoke-PipEnv -Scope Global }
-
-if (![bool](Get-Command pipenv -ea Ignore)) { Set-Alias pipenv pipEnv\Invoke-PipEnv -Scope Global }
-
-if (![bool](Get-Command pipenv -ea Ignore)) { Set-Alias pipenv pipEnv\Invoke-PipEnv -Scope Global }
-
-if (![bool](Get-Command pipenv -ea Ignore)) { Set-Alias pipenv pipEnv\Invoke-PipEnv -Scope Global }
-
-if (![bool](Get-Command pipenv -ea Ignore)) { Set-Alias pipenv pipEnv\Invoke-PipEnv -Scope Global }
-
-if (![bool](Get-Command pipenv -ea Ignore)) { Set-Alias pipenv pipEnv\Invoke-PipEnv -Scope Global }
+if ([IO.Path]::Exists('/home/alain/.bun')) {
+  cliHelper.env\Set-Env -Name BUN_INSTALL -Scope 'Machine' -Value "/home/alain/.bun"
+  cliHelper.env\Set-Env -Name PATH -Scope 'Machine' -Value ('{0}{1}{2}' -f $env:PATH, [IO.Path]::PathSeparator, '/home/alain/.bun/bin')
+}

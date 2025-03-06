@@ -131,15 +131,3 @@
 ![65.png](65.png)
 66.png  
 ![66.png](66.png)
-67.png  
-![67.png](67.png)
-68.png  
-![68.png](68.png)
-69.png  
-![69.png](69.png)
-70.png  
-![70.png](70.png)
-71.png  
-![71.png](71.png)
-72.png  
-![72.png](72.png)
