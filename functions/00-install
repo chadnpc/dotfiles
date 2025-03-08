@@ -1,0 +1,933 @@
+#! /bin/bash
+
+# Arch Linux (post-)install scripts
+# Copyright (C) 2020
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+
+dir="$(dirname "$0")"
+
+VG=vg
+LV=lvm
+export VG
+export LV
+
+function is_size_nonzero {
+  if [[ "${1}" != "0" ]] && \
+     [[ "${1}" != "0G" ]] && \
+     [[ "${1}" != "0GiB" ]] && \
+     [[ "${1}" != "0GB" ]] && \
+     [[ "${1}" != "0Gb" ]] && \
+     [[ "${1}" != "[N|n][O|o]" ]] && \
+     [[ "${1}" != "[N|n][ONE|one]" ]]; then
+    return 0
+  else
+    return 1
+  fi
+}
+export -f is_size_nonzero
+
+DEVICE=
+function ask_device {
+  show_header "Device for installation:"
+  local disks
+  local disk
+  local result
+  disks=($(lsblk | grep disk | cut -d' ' -f1 | tr '\n' ' '))
+  select disk in "${disks[@]}"; do
+    if [ -z "${disk}" ]; then
+      show_warning "Invalid selection. Try again."
+      continue
+    fi
+    result="$(ask_question "Use ${disk}? (Y/n)")"
+    if ! [[ "${result}" =~ ^([Nn]$|[Nn][Oo]) ]]; then
+      DEVICE="${disk}"
+      break
+    fi
+  done
+}
+
+SCHEME=
+function ask_partition_scheme {
+  show_header "Parition scheme:"
+  local options=("Back" "LVM on LUKS" "LVM" "Plain")
+  local option
+  select option in "${options[@]}"; do
+    case "${option}" in
+      "Back")
+        ask_device
+        break
+        ;;
+      "LVM on LUKS")
+        SCHEME="LVM on LUKS"
+        break
+        ;;
+      "LVM")
+        SCHEME="LVM"
+        break
+        ;;
+      "Plain")
+        SCHEME="Plain"
+        break
+        ;;
+      *)
+        show_warning "ERROR: Invalid selection."
+        ;;
+    esac
+  done
+}
+
+BOOTMODE=
+MAKE_EFI_PARTITION=yes
+function ask_bootmode {
+  show_header "Boot system:"
+  if [ -e /sys/firmware/efi ]; then
+    local options=("Back" "GRUB" "systemd-boot" "EFISTUB")
+    local option
+    select option in "${options[@]}"; do
+      case "${option}" in
+        "Back")
+          ask_partition_scheme
+          break
+          ;;
+        "GRUB")
+          BOOTMODE="GRUB"
+          break
+          ;;
+        "systemd-boot")
+          BOOTMODE="systemd-boot"
+          break
+          ;;
+        "EFISTUB")
+          show_warning "Not supported yet..."
+          ;;
+        *)
+          show_warning "ERROR: Invalid selection."
+          ;;
+      esac
+    done
+  else
+    show_info "EFI support not detected. Defaulting to GRUB."
+    BOOTMODE="GRUB"
+    result="$(ask_question "Create EFI partition anyway? (y/N)")"
+    if ! [[ "${result}" =~ ^[Yy]$|[Yy][Ee][Ss] ]]; then
+      MAKE_EFI_PARTITION=no
+    fi
+  fi
+}
+
+function sanitize_size_input {
+  local value
+  local suffix
+  value="$(echo "${1}" | sed -n 's/^\([0-9\.]\+\)\ *[A-Za-z]*/\1/p')"
+  suffix="$(echo "${1}" | sed -n 's/^[0-9\.]\+\ *\([A-Za-z]\+\)/\1/p')"
+
+  # if using base 10 units
+  if [[ "${1}" = "fill" ]]; then
+    value="${1}"
+
+  elif [[ "${suffix}" =~ ^[Pp]etabyte|^[Pp][Bb]s?$ ]]; then
+    value="$(echo "${value} * 1000^5 / 1024" | bc -l)"
+    value="${value%.*}k"
+  elif [[ "${suffix}" =~ ^[Tt]erabyte|^[Tt][Bb]s?$ ]]; then
+    value="$(echo "${value} * 1000^4 / 1024" | bc -l)"
+    value="${value%.*}k"
+  elif [[ "${suffix}" =~ ^[Gg]igabyte|^[Gg][Bb]s?$ ]]; then
+    value="$(echo "${value} * 1000^3 / 1024" | bc -l)"
+    value="${value%.*}k"
+  elif [[ "${suffix}" =~ ^[Mm]egabyte|^[Mm][Bb]s?$ ]]; then
+    value="$(echo "${value} * 1000^2 / 1024" | bc -l)"
+    value="${value%.*}k"
+  elif [[ "${suffix}" =~ ^[Kk]ilobyte|^[Kk][Bb]s?$ ]]; then
+    value="$(echo "${value} * 1000^1 / 1024" | bc -l)"
+    value="${value%.*}k"
+
+  elif [[ "${suffix}" =~ ^[Pp]ebibyte|^[Pp]i[Bb]s?$|^[Pp]$ ]]; then
+    value="$(echo "${value} * 1024^4" | bc -l)"
+    value="${value%.*}k"
+  elif [[ "${suffix}" =~ ^[Tt]ebibyte|^[Tt]i[Bb]s?$|^[Tt]$ ]]; then
+    value="$(echo "${value} * 1024^3" | bc -l)"
+    value="${value%.*}k"
+  elif [[ "${suffix}" =~ ^[Gg]ibibyte|^[Gg]i[Bb]s?$|^[Gg]$ ]]; then
+    value="$(echo "${value} * 1024^2" | bc -l)"
+    value="${value%.*}k"
+  elif [[ "${suffix}" =~ ^[Mm]ebibyte|^[Mm]i[Bb]s?$|^[Mm]$ ]]; then
+    value="$(echo "${value} * 1024^1" | bc -l)"
+    value="${value%.*}k"
+  elif [[ "${suffix}" =~ ^[Ki]ibibyte|^[Kk]i[Bb]s?$|^[Kk]$ ]]; then
+    value="${value}k"
+  else
+    value="${value}${suffix}"
+  fi
+
+  echo "${value}" # output in kibibytes
+}
+
+function subtract {
+  local input1="${1}"
+  local input2="${2}"
+
+  if [[ "${input1}" =~ P$ ]]; then
+    input1=${input1/P/}
+    input1=$(echo "${input1} * 1024^5" | bc -l)
+  elif [[ "${input1}" =~ T$ ]]; then
+    input1=${input1/T/}
+    input1=$(echo "${input1} * 1024^4" | bc -l)
+  elif [[ "${input1}" =~ G$ ]]; then
+    input1=${input1/G/}
+    input1=$(echo "${input1} * 1024^3" | bc -l)
+  elif [[ "${input1}" =~ M$ ]]; then
+    input1=${input1/M/}
+    input1=$(echo "${input1} * 1024^2" | bc -l)
+  elif [[ "${input1}" =~ k$ ]]; then
+    input1=${input1/k/}
+    input1=$(echo "${input1} * 1024" | bc -l)
+  # else
+  #   input1=$(echo "${input1}" | bc -l)
+  fi
+
+  if [[ "${input2}" =~ P$ ]]; then
+    input2=${input2/P/}
+    input2=$(echo "${input2} * 1024^5" | bc -l)
+  elif [[ "${input2}" =~ T$ ]]; then
+    input2=${input2/T/}
+    input2=$(echo "${input2} * 1024^4" | bc -l)
+  elif [[ "${input2}" =~ G$ ]]; then
+    input2=${input2/G/}
+    input2=$(echo "${input2} * 1024^3" | bc -l)
+  elif [[ "${input2}" =~ M$ ]]; then
+    input2=${input2/M/}
+    input2=$(echo "${input2} * 1024^2" | bc -l)
+  elif [[ "${input2}" =~ k$ ]]; then
+    input2=${input2/k/}
+    input2=$(echo "${input2} * 1024" | bc -l)
+  # else
+  #   input2=$(echo "${input2}" | bc -l)
+  fi
+
+  if [ "$(echo "${input1} >= ${input2}" | bc -l)" = 1 ]; then
+    output="$(echo "${input1} - ${input2}" | bc -l)"
+  else
+    echo "ERROR: not enough (remaining) space."
+    exit 3
+  fi
+  echo "${output%.*}"
+}
+
+function get_base2 {
+  local value="${1}"
+  local suffix=""
+  local exp=0
+
+  while [ "$(echo "1024^${exp} > ${value}" | bc)" = 0 ]; do
+    exp=$((exp + 1))
+  done
+  exp=$((exp - 1))
+  value="$(echo "${value} / 1024^${exp}" | bc)"
+
+  case "${exp}" in
+    1) suffix="KiB";;
+    2) suffix="MiB";;
+    3) suffix="GiB";;
+    4) suffix="TiB";;
+    5) suffix="PiB";;
+    6) echo "${exp} --- huh?" && exit 3;;
+  esac
+
+  echo "${value}${suffix}"
+}
+
+function get_base10 {
+  local value="${1}"
+  local suffix=""
+  local exp=0
+  while [ "$(echo "1000^${exp} > ${value}" | bc)" = 0 ]; do
+    exp=$((exp + 1))
+  done
+  exp=$((exp - 1))
+  value="$(echo "${value} / 1000^${exp}" | bc)"
+
+  case "${exp}" in
+    1) suffix="k";;
+    2) suffix="M";;
+    3) suffix="G";;
+    4) suffix="T";;
+    5) suffix="P";;
+    6) echo "${exp} --- huh?" && exit 3;;
+  esac
+
+  echo "${value}${suffix}"
+}
+
+declare -A PARTITIONS
+PARTITIONS=([root]="20G" [swap]="4G" [home]="fill" [share]="0G")
+function ask_partition_sizes {
+  local free_size
+  local swap
+  local home
+  local root
+  local share
+
+  free_size="$(lsblk -b -dno SIZE "/dev/${DEVICE}")"
+
+  show_header "Specify partitiion sizes. $(get_base10 "${free_size}") ($(get_base2 "${free_size}")) available:"
+  swap=$(ask_question "Swap (default=4GiB):")
+  swap=$(sanitize_size_input "${swap}")
+  if [[ -n "${swap}" ]]; then
+    PARTITIONS["swap"]="${swap}"
+    free_size="$(subtract "${free_size}" "${swap}")"
+    show_info "$(get_base10 "${free_size}") ($(get_base2 "${free_size}")) available"
+  fi
+
+  share=$(ask_question "Share (default=0GiB):")
+  share=$(sanitize_size_input "${share}")
+  if [[ -n "${share}" ]]; then
+    PARTITIONS["share"]="${share}"
+    if [[ "${share}" = "fill" ]]; then
+      free_size="0G"
+    else
+      free_size="$(subtract "${free_size}" "${share}")"
+      show_info "$(get_base10 "${free_size}") ($(get_base2 "${free_size}")) available"
+    fi
+  fi
+
+  root=$(ask_question "Root (default=20GiB):")
+  root=$(sanitize_size_input "${root}")
+  if [[ -n "${root}" ]]; then
+    PARTITIONS["root"]="${root}"
+    if [[ "${root}" = "fill" ]]; then
+      free_size="0G"
+    else
+      free_size="$(subtract "${free_size}" "${root}")"
+      show_info "$(get_base10 "${free_size}") ($(get_base2 "${free_size}")) available"
+    fi
+  fi
+
+  if [[ "${PARTITIONS["root"]}" != "fill" ]]; then
+    home=$(ask_question "Home (default=fill):")
+    home=$(sanitize_size_input "${home}")
+    if [[ -n "${home}" ]]; then
+      PARTITIONS["home"]="${home}"
+      if [[ "${home}" = "fill" ]]; then
+        free_size="0G"
+      else
+        free_size="$(subtract "${free_size}" "${home}")"
+        show_info "$(get_base10 "${free_size}") ($(get_base2 "${free_size}")) available"
+      fi
+    fi
+  else
+    PARTITIONS["home"]=0
+  fi
+}
+
+EFI_PARTITION=
+CRYPT_PARTITION=
+ROOT_PARTITION=
+HOME_PARTITION=
+SWAP_PARTITION=
+SHARE_PARTITION=
+function set_partitions {
+  show_header "Writing parititons to ${DEVICE}..."
+  sgdisk -Z "/dev/${DEVICE}"
+  partprobe "/dev/${DEVICE}"
+
+  local sgdisk_opts
+  local part_count
+  sgdisk_opts="--clear"
+  sgdisk_opts="${sgdisk_opts} --new=1:0:+1MiB --typecode=1:ef02"
+  part_count=2
+
+  local add_p=false
+  if [[ "${DEVICE}" =~ [[:digit:]]$ ]]; then
+    add_p=true
+  fi
+
+  if [[ "${MAKE_EFI_PARTITION}" = "yes" ]]; then
+    sgdisk_opts="${sgdisk_opts} --new=2:0:+512MiB --typecode=${part_count}:ef00"
+    if "${add_p}"; then
+      EFI_PARTITION="/dev/${DEVICE}p${part_count}"
+    else
+      EFI_PARTITION="/dev/${DEVICE}${part_count}"
+    fi
+    part_count=$(( part_count + 1 ))
+  fi
+
+  if is_size_nonzero "${PARTITIONS["share"]}"; then
+    sgdisk_opts="${sgdisk_opts} --new=${part_count}:0:+${PARTITIONS["share"]} --typecode=${part_count}:0700" # 8300 for ext4
+    if "${add_p}"; then
+      SHARE_PARTITION="/dev/${DEVICE}p${part_count}"
+    else
+      SHARE_PARTITION="/dev/${DEVICE}${part_count}"
+    fi
+    part_count=$(( part_count + 1 ))
+  fi
+
+  case "${SCHEME}" in
+    "LVM on LUKS")
+      sgdisk_opts="${sgdisk_opts} --new=${part_count}:0:0 --typecode=${part_count}:8309"
+      if "${add_p}"; then
+        ROOT_PARTITION="/dev/${DEVICE}p${part_count}"
+        CRYPT_PARTITION="/dev/${DEVICE}p${part_count}"
+      else
+        ROOT_PARTITION="/dev/${DEVICE}${part_count}"
+        CRYPT_PARTITION="/dev/${DEVICE}${part_count}"
+      fi
+      part_count=$(( part_count + 1 ))
+      ;;
+    "LVM")
+      sgdisk_opts="${sgdisk_opts} --new=${part_count}:0:0 --typecode=${part_count}:8e00"
+      if "${add_p}"; then
+        ROOT_PARTITION="/dev/${DEVICE}p${part_count}"
+      else
+        ROOT_PARTITION="/dev/${DEVICE}${part_count}"
+      fi
+      part_count=$(( part_count + 1 ))
+      ;;
+    "Plain")
+      if is_size_nonzero "${PARTITIONS["swap"]}"; then
+        sgdisk_opts="${sgdisk_opts} --new=${part_count}:0:+${PARTITIONS["swap"]} --typecode=${part_count}:8200"
+        if "${add_p}"; then
+          SWAP_PARTITION="/dev/${DEVICE}p${part_count}"
+        else
+          SWAP_PARTITION="/dev/${DEVICE}${part_count}"
+        fi
+        part_count=$(( part_count + 1 ))
+      fi
+      if is_size_nonzero "${PARTITIONS["root"]}"; then
+        if  [[ "${PARTITIONS["root"]}" = "fill" ]]; then
+          sgdisk_opts="${sgdisk_opts} --new=${part_count}:0:0 --typecode=${part_count}:8300"
+          if "${add_p}"; then
+            ROOT_PARTITION="/dev/${DEVICE}p${part_count}"
+          else
+            ROOT_PARTITION="/dev/${DEVICE}${part_count}"
+          fi
+          part_count=$(( part_count + 1 ))
+        else
+          sgdisk_opts="${sgdisk_opts} --new=${part_count}:0:+${PARTITIONS["root"]} --typecode=${part_count}:8300"
+          if "${add_p}"; then
+            ROOT_PARTITION="/dev/${DEVICE}p${part_count}"
+          else
+            ROOT_PARTITION="/dev/${DEVICE}${part_count}"
+          fi
+          part_count=$(( part_count + 1 ))
+          if is_size_nonzero "${PARTITIONS["home"]}"; then
+            if  [[ "${PARTITIONS["home"]}" = "fill" ]]; then
+              sgdisk_opts="${sgdisk_opts} --new=${part_count}:0:0 --typecode=${part_count}:8300"
+              if "${add_p}"; then
+                HOME_PARTITION="/dev/${DEVICE}p${part_count}"
+              else
+                HOME_PARTITION="/dev/${DEVICE}${part_count}"
+              fi
+              part_count=$(( part_count + 1 ))
+            else
+              sgdisk_opts="${sgdisk_opts} --new=${part_count}:0:+${PARTITIONS["home"]} --typecode=${part_count}:8300"
+              if "${add_p}"; then
+                HOME_PARTITION="/dev/${DEVICE}p${part_count}"
+              else
+                HOME_PARTITION="/dev/${DEVICE}${part_count}"
+              fi
+              part_count=$(( part_count + 1 ))
+            fi
+          fi
+        fi
+      fi
+      ;;
+  esac
+
+  local cmd
+  cmd="sgdisk ${sgdisk_opts} /dev/${DEVICE}"
+  eval "${cmd}"
+  sync
+}
+
+function format_partitions {
+  case "${SCHEME}" in
+    "LVM on LUKS")
+      if [[ "${BOOTMODE}" = "GRUB" ]]; then
+        echo -n "${CRYPT_PASSWORD}" | \
+          cryptsetup luksFormat --type luks1 "${CRYPT_PARTITION}" --batch-mode --key-file -
+      else
+        echo -n "${CRYPT_PASSWORD}" | \
+          cryptsetup luksFormat "${CRYPT_PARTITION}" --batch-mode --key-file -
+      fi
+      echo -n "${CRYPT_PASSWORD}" | \
+        cryptsetup luksOpen "${CRYPT_PARTITION}" ${LV} --batch-mode --key-file -
+
+      pvcreate /dev/mapper/${LV}
+      vgcreate ${VG} /dev/mapper/${LV}
+      if is_size_nonzero "${PARTITIONS["swap"]}"; then
+        lvcreate -L "${PARTITIONS["swap"]}" ${VG} -n swap
+        SWAP_PARTITION=/dev/mapper/${VG}-swap
+      fi
+      if is_size_nonzero "${PARTITIONS["root"]}"; then
+        if [[ "${PARTITIONS["root"]}" = "fill" ]]; then
+          lvcreate -l +100%FREE ${VG} -n root
+          ROOT_PARTITION=/dev/mapper/${VG}-root
+        else
+          lvcreate -L "${PARTITIONS["root"]}" ${VG} -n root
+          ROOT_PARTITION=/dev/mapper/${VG}-root
+          if is_size_nonzero "${PARTITIONS["home"]}"; then
+            if [[ "${PARTITIONS["home"]}" = "fill" ]]; then
+              lvcreate -l +100%FREE ${VG} -n home
+              HOME_PARTITION=/dev/mapper/${VG}-home
+            else
+              lvcreate -L "${PARTITIONS["home"]}" ${VG} -n home
+              HOME_PARTITION=/dev/mapper/${VG}-home
+            fi
+          fi
+        fi
+      fi
+      ;;
+    "LVM")
+      pvcreate "${ROOT_PARTITION}"
+      vgcreate ${VG} "${ROOT_PARTITION}"
+      if is_size_nonzero "${PARTITIONS["swap"]}"; then
+        lvcreate -L "${PARTITIONS["swap"]}" ${VG} -n swap
+        SWAP_PARTITION=/dev/mapper/${VG}-swap
+      fi
+      if is_size_nonzero "${PARTITIONS["root"]}"; then
+        if [[ "${PARTITIONS["root"]}" = "fill" ]]; then
+          lvcreate -l +100%FREE ${VG} -n root
+          ROOT_PARTITION=/dev/mapper/${VG}-root
+        else
+          lvcreate -L "${PARTITIONS["root"]}" ${VG} -n root
+          ROOT_PARTITION=/dev/mapper/${VG}-root
+          if is_size_nonzero "${PARTITIONS["home"]}"; then
+            if [[ "${PARTITIONS["home"]}" = "fill" ]]; then
+              lvcreate -l +100%FREE ${VG} -n home
+              HOME_PARTITION=/dev/mapper/${VG}-home
+            else
+              lvcreate -L "${PARTITIONS["home"]}" ${VG} -n home
+              HOME_PARTITION=/dev/mapper/${VG}-home
+            fi
+          fi
+        fi
+      fi
+      ;;
+    # "Plain")
+    #   part_count=$(( part_count + 1 ))
+    #   ;;
+  esac
+
+  if [ -b "${EFI_PARTITION}" ]; then
+    mkfs.vfat -F32 "${EFI_PARTITION}"
+  fi
+  if [ -e "${SWAP_PARTITION}" ]; then
+    mkswap -L swap "${SWAP_PARTITION}"
+    swapon "${SWAP_PARTITION}"
+  fi
+  if [ -e "${ROOT_PARTITION}" ]; then
+    mkfs.ext4 "${ROOT_PARTITION}"
+  fi
+  if [ -e "${HOME_PARTITION}" ]; then
+    mkfs.ext4 "${HOME_PARTITION}"
+  fi
+}
+
+function mount_install {
+  mount "${ROOT_PARTITION}" /mnt
+  if [ -b "${EFI_PARTITION}" ]; then
+    mkdir -p /mnt/efi
+    mount "${EFI_PARTITION}" /mnt/efi
+  fi
+  if [ -e "${HOME_PARTITION}" ]; then
+    mkdir -p /mnt/home
+    mount "${HOME_PARTITION}" /mnt/home
+  fi
+}
+
+function unmount_install {
+  umount -R /mnt
+}
+
+TIMEZONE="UTC"
+function ask_timezone {
+  local res
+
+  res="$(timedatectl list-timezones | \
+         fzf --layout=reverse --scroll-off=5 --header-first \
+             --header="Select time zone ('ESC' for default: ${TIMEZONE})" || true)"
+  clear
+
+  if [ -n "${res}" ]; then
+    TIMEZONE="${res}"
+  else
+    show_info "Using default time zone ${TIMEZONE@Q}."
+  fi
+}
+
+function set_timezone {
+  ln -sfn "/usr/share/zoneinfo/${TIMEZONE}" /etc/localtime
+  hwclock --systohc --utc
+}
+export -f set_timezone
+
+LOCALE="en_US.UTF-8"
+CHARSET="UTF-8"
+function ask_locale {
+  local res
+
+  res="$(sed -n "s,^#\?\ \?\([[:alnum:]\.@_\-]\+\)\ \([[:alnum:]\-]\+\)\ *$,\1 \2,p" \
+         /etc/locale.gen | \
+         fzf --layout=reverse --scroll-off=5 --header-first \
+             --header="Select locale ('ESC' for default: ${LOCALE})" || true)"
+  clear
+
+  if [ -n "${res}" ]; then
+    LOCALE="$(echo "${res}" | cut -d" " -f1)"
+    CHARSET="$(echo "${res}" | cut -d" " -f2)"
+  else
+    show_info "Using default locale ${LOCALE@Q}."
+    show_info "Using default charset ${CHARSET@Q}."
+  fi
+}
+
+function set_locale {
+  local keymap
+  sed -i "/^#${LOCALE} ${CHARSET}/s/^#//" /etc/locale.gen
+  locale-gen
+  echo "LANG=${LOCALE}" > /etc/locale.conf
+  keymap="$(echo "${LOCALE}" | sed -n "s/\([a-z]\+\)_\([A-Z]\+\)[@\ \.].*/\2/p")"
+  echo "KEYMAP=${keymap,,}" > /etc/vconsole.conf
+}
+export -f set_locale
+
+HOST_NAME="Arch"
+function ask_hostname {
+  local tmp
+  tmp="$(ask_question "Hostname (default: ${HOST_NAME})")"
+  if [ -n "${tmp}" ]; then
+    HOST_NAME="${tmp}"
+  else
+    show_info "Defaulting hostname to ${HOST_NAME}."
+  fi
+}
+
+function set_hostname {
+  echo "${HOST_NAME}" > /etc/hostname
+}
+export -f set_hostname
+
+USER_NAME="admin"
+function ask_username {
+  local tmp
+  local is_invalid=true
+
+  while "${is_invalid}"; do
+    tmp="$(ask_question "User name (default: ${USER_NAME})")"
+    if [ -n "${tmp}" ]; then
+      if (( "${#tmp}" > 16 )); then
+        show_error "ERROR: user name ${tmp@Q} greater than 16 characters."
+        tmp=
+        continue
+      elif [[ "${tmp}" =~ ^[[:lower:]_][[:lower:][:digit:]_-]{2,15}$ ]]; then
+        USER_NAME="${tmp,,}"
+        is_invalid=false
+      else
+        show_error "ERROR: user name ${tmp@Q} is invalid."
+        tmp=
+        continue
+      fi
+    else
+      show_info "Defaulting user name to ${USER_NAME@Q}."
+      is_invalid=false
+    fi
+  done
+}
+
+USER_PASSWORD=""
+function ask_password {
+  local tmp1
+  local tmp2
+  local is_invalid=true
+  while "${is_invalid}"; do
+    stty -echo
+    tmp1="$(ask_question "User password")"
+    echo
+    tmp2="$(ask_question "Re-enter password")"
+    stty echo
+    echo
+    if [ -z "${tmp1}" ]; then
+      show_error "ERROR: no password given."
+      continue
+    elif [ "${tmp1}" != "${tmp2}" ]; then
+      show_error "ERROR: password mismatch."
+      continue
+    else
+      USER_PASSWORD="${tmp1}"
+      is_invalid=false
+    fi
+  done
+}
+
+CRYPT_PASSWORD=""
+function ask_lukspass {
+  local tmp1
+  local tmp2
+  local is_invalid=true
+  while "${is_invalid}"; do
+    stty -echo
+    tmp1="$(ask_question "LUKS decryption password")"
+    echo
+    tmp2="$(ask_question "Re-enter LUKS decription password")"
+    stty echo
+    echo
+    if [ -z "${tmp1}" ]; then
+      show_error "ERROR: no password given."
+      continue
+    elif [ "${tmp1}" != "${tmp2}" ]; then
+      show_error "ERROR: password mismatch."
+      continue
+    else
+      CRYPT_PASSWORD="${tmp1}"
+      is_invalid=false
+    fi
+  done
+}
+
+function add_user {
+  useradd -m -c "${USER_NAME[@]^}" "${USER_NAME}" -s /bin/bash
+  usermod -aG wheel,"${USER_NAME}" "${USER_NAME}"
+  echo "${USER_NAME}:${USER_PASSWORD}" | chpasswd
+
+  sed -e "s/^# \(%wheel ALL=(ALL:\?\(ALL\)\?) ALL\)$/\1/g" /etc/sudoers | \
+    EDITOR=tee visudo >/dev/null
+}
+export -f add_user
+
+function disable_root {
+  passwd -l root
+}
+export -f disable_root
+
+function set_mkinitcpio {
+  local old_hooks
+  local new_hooks
+  local modules
+  local vendor
+
+  old_hooks="$(sed -n "s/^HOOKS=(\(.*\))$/\1/p" /etc/mkinitcpio.conf)"
+  new_hooks="$(echo "${old_hooks}" | \
+               sed -e 's/udev/systemd/g' \
+                   -e 's/block/block sd-encrypt lvm2/g' \
+                   -e 's/keymap consolefont/sd-vconsole/g')"
+  sed -i "s/${old_hooks}/${new_hooks}/g" /etc/mkinitcpio.conf
+
+  vendor="$(lscpu | sed -n "s,^Vendor ID: \+\([A-Za-z]\+\),\1,p")"
+  modules="$(sed -n "s/^MODULES=(\(.*\))$/\1/p" /etc/mkinitcpio.conf)"
+  if [[ "${vendor}" =~ "AMD" ]]; then
+    if ! grep "^MODULES.*amdgpu" /etc/mkinitcpio.conf >/dev/null 2>&1; then
+      if [ -n "${modules}" ]; then
+        sed -i "s/^MODULES=(\(.*\))$/MODULES=(\1 amdgpu)/g" /etc/mkinitcpio.conf
+      else
+        sed -i "s/^MODULES=()$/MODULES=(amdgpu)/g" /etc/mkinitcpio.conf
+      fi
+    fi
+  elif [[ "${vendor}" =~ "Intel" ]]; then
+    if ! grep "^MODULES.*i915" /etc/mkinitcpio.conf >/dev/null 2>&1; then
+      if [ -n "${modules}" ]; then
+        sed -i "s/^MODULES=(\(.*\))$/MODULES=(\1 i915)/g" /etc/mkinitcpio.conf
+      else
+        sed -i "s/^MODULES=()$/MODULES=(i915)/g" /etc/mkinitcpio.conf
+      fi
+    fi
+  fi
+
+  mkinitcpio -P
+}
+export -f set_mkinitcpio
+
+function install_ucode {
+  vendor="$(lscpu | sed -n "s,^Vendor ID: \+\([A-Za-z]\+\),\1,p")"
+  if [[ "$vendor" =~ "AMD" ]]; then
+    pacman -S --noconfirm amd-ucode
+  elif [[ "$vendor" =~ "Intel" ]]; then
+    pacman -S --noconfirm intel-ucode
+  fi
+}
+export -f install_ucode
+
+function install_gummiboot {
+  if command -v bootctl >/dev/null 2>&1; then
+    pacman -S --noconfirm efibootmgr
+
+    local root_uuid
+    local crypt_uuid
+    local cmdline
+
+    root_uuid=$(sed -n "s,^UUID=\(\S\+\)\s\+/\s\+.*,\1,p" /etc/fstab)
+    crypt_uuid=$(blkid | grep crypto_LUKS | sed -n 's,.* UUID="\(\S\+\)" TYPE.*,\1,p')
+
+    if [[ "${SCHEME}" =~ LVM ]]; then
+      if [ -n "${crypt_uuid}" ]; then
+        cmdline="rd.luks.name=${crypt_uuid}=${LV} rd.luks.options=discard"
+        if [ -e /dev/mapper/${VG}-root ]; then
+          cmdline="${cmdline} root=/dev/mapper/${VG}-root"
+        fi
+        if [ -e /dev/mapper/${VG}-home ]; then
+          cmdline="${cmdline} home=/dev/mapper/${VG}-home"
+        fi
+        if [ -e /dev/mapper/${VG}-swap ]; then
+          cmdline="${cmdline} resume=/dev/mapper/${VG}-swap"
+        fi
+      elif [ -n "${root_uuid}" ]; then
+        cmdline="root=/dev/mapper/${VG}-root"
+      else
+        show_error "ERROR: Missing root ${root_uuid}."
+        exit 3
+      fi
+      cmdline="${cmdline} rw"
+    else
+      cmdline="rw"
+    fi
+
+    bootctl --esp-path=/efi install
+    cp -af /boot/vmlinuz* /boot/initramfs-linux* /efi
+    mkdir -p /efi/loader/entries
+    {
+      echo "default	linux.conf";
+      echo "timeout	1";
+      echo "console-mode	max";
+      echo "editor	no";
+    }> /efi/loader/loader.conf
+
+    {
+      echo "title	Arch Linux, linux";
+      echo "linux	/vmlinuz-linux";
+      echo "initrd	/initramfs-linux.img";
+      echo "options	${cmdline}";
+    }> /efi/loader/entries/linux.conf
+
+    {
+      echo "title	Arch Linux, linux (fallback)";
+      echo "linux	/vmlinuz-linux";
+      echo "initrd	/initramfs-linux-fallback.img";
+      echo "options	${cmdline}";
+    }> /efi/loader/entries/linux-fallback.conf
+
+    vendor="$(lscpu | sed -n "s,^Vendor ID: \+\([A-Za-z]\+\),\1,p")"
+    if [[ "$vendor" =~ AMD ]] && [ -f /boot/amd-ucode.img ]; then
+      cp -af /boot/amd-ucode.img /efi
+      sed -i "/^linux\s+\/vmlinuz/a initrd	\/amd-ucode.img" \
+        /efi/loader/entries/linux.conf \
+        /efi/loader/entries/linux-fallback.conf
+    elif [[ "$vendor" =~ Intel ]] && [ -f /boot/intel-ucode.img ]; then
+      cp -af /boot/intel-ucode.img /efi
+      sed -i "/^linux\s+\/vmlinuz/a initrd	\/intel-ucode.img" \
+        /efi/loader/entries/linux.conf \
+        /efi/loader/entries/linux-fallback.conf
+    fi
+  fi
+}
+export -f install_gummiboot
+
+function install_grub {
+  pacman -S --noconfirm grub os-prober efibootmgr
+
+  local root_uuid
+  local crypt_uuid
+  local cmdline
+
+  root_uuid=$(sed -n "s,^UUID=\(\S\+\)\s\+/\s\+.*,\1,p" /etc/fstab)
+  crypt_uuid=$(blkid | grep crypto_LUKS | sed -n 's,.* UUID="\(\S\+\)" TYPE.*,\1,p')
+
+  if [[ "${SCHEME}" =~ LVM ]]; then
+    if [ -n "${crypt_uuid}" ]; then
+      cmdline="rd.luks.name=${crypt_uuid}=${LV} rd.luks.options=discard"
+      if [ -e /dev/mapper/${VG}-root ]; then
+        cmdline="${cmdline} root=/dev/mapper/${VG}-root"
+      fi
+      if [ -e /dev/mapper/${VG}-home ]; then
+        cmdline="${cmdline} home=/dev/mapper/${VG}-home"
+      fi
+      if [ -e /dev/mapper/${VG}-swap ]; then
+        cmdline="${cmdline} resume=/dev/mapper/${VG}-swap"
+      fi
+    elif [ -n "${root_uuid}" ]; then
+      cmdline="root=/dev/mapper/${VG}-root"
+    else
+      show_error "ERROR: Missing root ${root_uuid}."
+      exit 3
+    fi
+    sed -i "s|^GRUB_CMDLINE_LINUX=[\"\"]*|GRUB_CMDLINE_LINUX=\"${cmdline}\"|g" /etc/default/grub
+  fi
+
+  if [ -n "${crypt_uuid}" ]; then
+    sed -i "s/^#GRUB_ENABLE_CRYPTODISK/GRUB_ENABLE_CRYPTODISK/g" /etc/default/grub
+  fi
+
+  if [ -e /sys/firmware/efi ]; then
+    grub-install --target=x86_64-efi --efi-directory=/efi --bootloader-id=GRUB --recheck
+  fi
+  grub-install --target=i386-pc "/dev/${DEVICE}" --recheck
+  grub-mkconfig -o /boot/grub/grub.cfg
+}
+export -f install_grub
+
+function make_luks_key {
+  local crypt_key
+  local old_files
+  local new_files
+  local old_cmdline
+  local new_cmdline
+
+  show_header "Adding LUKS decryption key file..."
+  crypt_key="/etc/crypto_keyfile.bin"
+  dd bs=512 count=4 if=/dev/random of=${crypt_key}
+  chmod 400 ${crypt_key}
+  echo -n "${CRYPT_PASSWORD}" | \
+    cryptsetup luksAddKey "${CRYPT_PARTITION}" --key-file=- --batch-mode "${crypt_key}" --key-slot 1
+
+  show_info "Rebuilding kernel(s)..."
+  old_files=$(sed -n "s/^FILES=(\(.*\))/\1/p" /etc/mkinitcpio.conf)
+  if [ -n "${old_files}" ]; then
+    new_files="${old_files} ${crypt_key}"
+    sed -i "s|^FILES=(${old_files})$|FILES=(${new_files})|g" /etc/mkinitcpio.conf
+  else
+    new_files="${crypt_key}"
+    sed -i "s|^FILES=()$|FILES=(${new_files})|g" /etc/mkinitcpio.conf
+  fi
+  mkinitcpio -P
+  chmod -R 700 /boot
+
+  if [ -f /etc/default/grub ]; then
+    show_info "Updating GRUB configuration..."
+    old_cmdline=$(sed -n "s/^GRUB_CMDLINE_LINUX=\"\(.*\)\"/\1/p" /etc/default/grub)
+    if [ -n "${old_cmdline}" ]; then
+      new_cmdline="${old_cmdline} rd.luks.key=${crypt_key}"
+    else
+      new_cmdline="rd.luks.key=${crypt_key}"
+    fi
+    sed -i "s|^GRUB_CMDLINE_LINUX=\"${old_cmdline}\"|GRUB_CMDLINE_LINUX=\"${new_cmdline}\"|g" /etc/default/grub
+    grub-mkconfig -o /boot/grub/grub.cfg
+  fi
+}
+export -f make_luks_key
+
+function update_mirrorlist {
+  pacman -Sy --noconfirm reflector
+  reflector --verbose --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
+  pacman -Sy
+}
+export -f update_mirrorlist
+
+function install_packages {
+  pacman --noconfirm -S \
+    base-devel linux linux-headers linux-firmware cryptsetup lvm2 \
+    networkmanager man-db man-pages vim wget rsync git iwd
+  systemctl enable NetworkManager
+}
+export -f install_packages
