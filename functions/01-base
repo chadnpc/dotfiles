@@ -1,0 +1,294 @@
+#! /bin/bash
+
+# Arch Linux (post-)install scripts
+# Copyright (C) 2020
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+
+dir="$(dirname "$0")"
+
+base="${dir}/packages/base.list"
+bashrc="${dir}/dotfiles/bashrc"
+bashprofile="${dir}/dotfiles/bash_profile"
+pacmanconf="/etc/pacman.conf"
+function install_base {
+  show_header "Installing base packages and their config files."
+  check_installed "${base}"
+  check_fail
+  show_success "Base packages installed."
+
+  if ! [ -f "${HOME}/.bash_profile" ]; then
+    show_info "Installing bash_profile."
+    cp -f "${bashprofile}" "${HOME}/.bash_profile"
+    show_success "Installed bash_profile."
+  fi
+
+  show_info "Installing bashrc."
+  cp -f "${bashrc}" "${HOME}/.bashrc"
+  show_success "Installed bashrc."
+}
+
+function enable_multilib {
+  if [[ $(uname -m) = "x86_64" ]]; then
+    show_info "Enabling multilib pacman repository."
+    sudo sed -i "s/#\[multilib\]/\[multilib\]/g" ${pacmanconf}
+    sudo sed -i "/\[multilib\]/{n;s/#Include = /Include = /}" ${pacmanconf}
+    check_fail
+    sudo pacman -Sy --noconfirm
+    show_success "Multilib enabled."
+  else
+    show_warning "Multilib not applicable for 32-bit installations. Skipping."
+    show_warning "Arch discontinued 32-bit support in early 2017. Consider upgrading to a 64-bit."
+  fi
+}
+
+mirrors="${dir}/packages/mirrors.list"
+function update_mirrorlist {
+  show_header "Installing packages for configuring Arch mirrorlists."
+  check_installed "${mirrors}"
+  check_fail
+  show_success "Mirrorlsit packages installed."
+
+  # Use reflector to sort among fastest mirrors
+  show_info "Using reflector to find the fastest https mirrors."
+  sudo reflector \
+    --verbose \
+    --latest 10 \
+    --protocol https \
+    --sort rate \
+    --save /etc/pacman.d/mirrorlist
+}
+
+firmware="${dir}/packages/firmware.list"
+grubcfg="/boot/grub/grub.cfg"
+function install_firmware {
+  show_header "Installing firmware and microcode."
+  check_installed "${firmware}"
+  check_fail
+
+  # If booting with GRUB.
+  if command -v grub-mkconfig >/dev/null 2>&1; then
+    show_info "Rebuilding grub.cfg to use microcode updates."
+    sudo grub-mkconfig -o ${grubcfg}
+  fi
+  # If booting with Gummiboot.
+  if [ "$(sudo bootctl is-installed)" = yes ]; then
+    show_info "Copying over Pacman hooks for CPU microcode."
+
+    local vendor
+    local efidir
+    local conf
+    vendor="$(lscpu | sed -n "s,^Vendor ID: \+\([A-Za-z]\+\),\1,p")"
+    efidir="$(bootctl -p)"
+    if [[ "${vendor}" =~ "AMD" ]]; then
+      sudo cp -af /boot/amd-ucode.img "${efidir}"
+
+      # Copy pacman hooks for microcode updates.
+      mkdir -p /etc/pacman.d/hooks/
+      sudo cp -af \
+        "${dir}/hooks/999-add-amd-ucode.hook" \
+        "${dir}/hooks/999-remove-amd-ucode.hook" \
+        "${dir}/hooks/999-update-amd-ucode.hook" \
+        /etc/pacman.d/hooks/
+
+      for conf in "${efidir}"/loader/entries/*.conf; do
+        if ! grep "^initrd\s\+/amd-ucode.img" "${conf}" >/dev/null 2>&1; then
+          sudo sed -i "/^initrd\s\+\/initramfs/i initrd	\/amd-ucode.img" "${conf}"
+        fi
+      done
+    elif [[ "${vendor}" =~ "Intel" ]]; then
+      sudo cp -af /boot/intel-ucode.img "${efidir}"
+
+      # Copy pacman hooks for microcode updates.
+      mkdir -p /etc/pacman.d/hooks/
+      sudo cp -af \
+        "${dir}/hooks/999-add-intel-ucode.hook" \
+        "${dir}/hooks/999-remove-intel-ucode.hook" \
+        "${dir}/hooks/999-update-intel-ucode.hook" \
+        /etc/pacman.d/hooks/
+
+      for conf in "${efidir}"/loader/entries/*.conf; do
+        if ! grep "^initrd\s\+/intel-ucode.img" "${conf}" >/dev/null 2>&1; then
+          sudo sed -i "/^initrd\s\+\/initramfs/i initrd	\/intel-ucode.img" "${conf}"
+        fi
+      done
+    fi
+  fi
+}
+
+function enable_sudo_insults {
+  # Customize sudo to insult incorrect password attempts
+  if ! sudo grep "^Defaults\s\+insults" /etc/sudoers >/dev/null 2>&1; then
+    show_info "Enabling sudo insults."
+    sudo sh -c \
+      'sed -e "/^# Defaults!REBOOT !log_output$/a Defaults insults" /etc/sudoers | \
+       (EDITOR="tee" visudo >/dev/null)'
+  else
+    show_info "Insults already enabled, you masochist."
+  fi
+}
+
+function stylize_pacman {
+  # Customize pacman to:
+  #  - color pacman output
+  #  - show pacman-the-game-styled progress bars for pacman
+  show_info "Enabling color and Pac-man animation for pacman."
+  sudo sed -i "s/^#Color$/Color/" ${pacmanconf}
+  if ! test "$(grep ^ILoveCandy$ "${pacmanconf}")"; then
+    sudo sed -i "/^CheckSpace$/a ILoveCandy" ${pacmanconf}
+  fi
+}
+
+function parallelize_pacman {
+  # Customize pacman to:
+  #  - parallelize downloads
+  show_info "Enabling parallel pacman downloads."
+  sudo sed -i "s/^#ParallelDownloads = \([0-9]\+\)$/ParallelDownloads = \1/g" ${pacmanconf}
+}
+
+function update_packages {
+  show_header "Updating packages."
+  sudo pacman -Syu --noconfirm
+  check_fail
+  show_success "Packages updated."
+}
+
+pcspkr_blacklist="/etc/modprobe.d/nobeep.conf"
+gtk2conf="${HOME}/.gtkrc-2.0"
+gtk3conf="${HOME}/.config/gtk-3.0/settings.ini"
+function disable_beep {
+  show_header "Disable PC speaker beep."
+  show_info "Blacklisting pcspkr and snd_pcsp kernel modules."
+  if ! [ "$(ls -A /etc/modprobe.d/)" ]; then
+    sudo sh -c "echo 'blacklist pcspkr' >> ${pcspkr_blacklist}"
+    sudo sh -c "echo 'blacklist snd_pcsp' >> ${pcspkr_blacklist}"
+  else
+    if ! find /etc/modprobe.d/ -type f \
+         -exec grep "blacklist pcspkr" {} + >/dev/null 2>&1; then
+      sudo sh -c "echo 'blacklist pcspkr' >> ${pcspkr_blacklist}"
+    fi
+    if ! find /etc/modprobe.d/ -type f \
+         -exec grep "blacklist snd_pcsp" {} + >/dev/null 2>&1; then
+      sudo sh -c "echo 'blacklist snd_pcsp' >> ${pcspkr_blacklist}"
+    fi
+  fi
+  show_success "Blacklisted in ${pcspkr_blacklist@Q}."
+
+  show_info "Disabling gtk2 and gtk3 error-bell."
+  if [ -f "${gtk2conf}" ]; then
+    if grep "^gtk-error-bell=" "${gtk2conf}" >/dev/null 2>&1; then
+      sed -i "s/^gtk-error-bell=.*$/gtk-error-bell=0/g" "${gtk2conf}"
+    else
+      echo "gtk-error-bell=0" >> "${gtk2conf}"
+    fi
+  else
+    mkdir -p "$(dirname "${gtk2conf}")"
+    echo "gtk-error-bell=0" >> "${gtk2conf}"
+  fi
+  if [ -f "${gtk3conf}" ]; then
+    if grep "^gtk-error-bell=" "${gtk3conf}" >/dev/null 2>&1; then
+      sed -i "s/^gtk-error-bell=.*$/gtk-error-bell=0/g" "${gtk3conf}"
+    elif grep "^[Settings]" "${gtk3conf}" >/dev/null 2>&1; then
+      sed -i "/^[Settings]$/a gtk-error-bell=0" "${gtk3conf}"
+    else
+      echo "[Settings]" >> "${gtk3conf}"
+      echo "gtk-error-bell=0" >> "${gtk3conf}"
+    fi
+  else
+    mkdir -p "$(dirname "${gtk3conf}")"
+    echo "[Settings]" > "${gtk3conf}"
+    echo "gtk-error-bell=0" >> "${gtk3conf}"
+  fi
+}
+
+function 01-base {
+  show_question "Base: what do you want to install?"
+  show_info "Main\n ${endbranch} Base (Hit ENTER to see options again.)"
+
+  local options=(
+    "Back"
+    "All"
+    "Base packages"
+    "Mirrorlist"
+    "Firmware"
+    "Updates"
+    "Enable multilib"
+    "Sudo insults"
+    "Pacman styling"
+    "Pacman parallel"
+    "Disable system beep")
+  local option
+  select option in "${options[@]}"; do
+    case "${option}" in
+      "Back")
+        break
+        ;;
+      "All")
+        update_packages
+        install_base
+        update_mirrorlist
+        install_firmware
+        enable_multilib
+        enable_sudo_insults
+        stylize_pacman
+        parallelize_pacman
+        disable_beep
+        show_info "Main\n ${endbranch} Base (Hit ENTER to see options again.)"
+        break
+        ;;
+      "Base packages")
+        install_base
+        show_info "Main\n ${endbranch} Base (Hit ENTER to see options again.)"
+        ;;
+      "Mirrorlist")
+        update_mirrorlist
+        show_info "Main\n ${endbranch} Base (Hit ENTER to see options again.)"
+        ;;
+      "Firmware")
+        install_firmware
+        show_info "Main\n ${endbranch} Base (Hit ENTER to see options again.)"
+        ;;
+      "Updates")
+        update_packages
+        show_info "Main\n ${endbranch} Base (Hit ENTER to see options again.)"
+        ;;
+      "Enable multilib")
+        enable_multilib
+        show_info "Main\n ${endbranch} Base (Hit ENTER to see options again.)"
+        ;;
+      "Sudo insults")
+        enable_sudo_insults
+        show_info "Main\n ${endbranch} Base (Hit ENTER to see options again.)"
+        ;;
+      "Pacman styling")
+        stylize_pacman
+        show_info "Main\n ${endbranch} Base (Hit ENTER to see options again.)"
+        ;;
+      "Pacman parallel")
+        parallelize_pacman
+        show_info "Main\n ${endbranch} Base (Hit ENTER to see options again.)"
+        ;;
+      "Disable system beep")
+        disable_beep
+        show_info "Main\n ${endbranch} Base (Hit ENTER to see options again.)"
+        ;;
+      *)
+        show_warning "Invalid option."
+        show_info "Main\n ${endbranch} Base (Hit ENTER to see options again.)"
+        ;;
+    esac
+  done
+}
