@@ -1,0 +1,212 @@
+#! /bin/bash
+
+# Arch Linux (post-)install scripts
+# Copyright (C) 2020
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+
+dir="$(dirname "$0")"
+deps="${dir}/packages/deps.list"
+install="${dir}/packages/install.list"
+
+export midbranch="\0342\0224\0234\0342\0224\0200\0342\0224\0200"
+export endbranch="\0342\0224\0224\0342\0224\0200\0342\0224\0200"
+
+export heirarchy="Main
+ ${midbranch} Base
+ ${midbranch} Miscellaneous
+ ${midbranch} Desktop environment
+ ${midbranch} Network tools
+ ${midbranch} Applications
+ ${midbranch} Themes
+ ${endbranch} Personalization"
+
+function check_user {
+  if [ ${EUID} -eq 0 ]; then
+    show_error "Don't run this script as root. Exiting."
+    exit 1
+  fi
+}
+
+function check_root {
+  if [ ${EUID} -eq 0 ]; then
+    show_info "I am root."
+  else
+    show_error "I need to be root."
+    exit 1
+  fi
+}
+
+function check_fail {
+  local exitstatus=${1:-}
+  if [[ ${exitstatus} -gt 0 ]]; then
+    show_error "Error code received. Returning to main."
+    sleep 3s && main
+  fi
+}
+
+function check_installed {
+  local metacount
+  local installcount
+  local package
+  local to_install=()
+  while read -r package; do
+    [ -z "${package}" ] && continue
+
+    metacount=$(pacman -Ss "${package}" | \
+                grep -c "(.*${package}.*)" || true)
+    installcount=$(pacman -Qs "${package}" | \
+                   grep -c "^local.*(.*${package}.*)$" || true)
+
+    # Check if package is installed.
+    if pacman -Qi "${package}" >/dev/null 2>&1; then
+      show_listitem "${package@Q} package already installed. Skipping."
+
+    # pacman -Qi won't work with meta packages, so check if all meta package
+    # members are installed instead.
+    elif [[ (${installcount} -eq ${metacount}) \
+            && ! (${installcount} -eq 0) ]]; then
+      show_listitem "${package@Q} meta-package already installed. Skipping."
+
+    # Runs if package is not installed or all members of meta-package are not
+    # installed.
+    else
+      to_install+=("${package}")
+    fi
+  done < "${1}"
+  [ "${#to_install}" -gt 0 ] && sudo pacman -S --ask 4 --noconfirm "${to_install[@]}"
+}
+
+function check_aur_installed {
+  local pkgbuilddir="${HOME}/.pkgbuild"
+  local aurprefix="https://aur.archlinux.org"
+  local curdir
+  local metacount
+  local installcount
+  local package
+  curdir="$(pwd)"
+
+  mkdir -p "${pkgbuilddir}"
+  while read -r package; do
+    [ -z "${package}" ] && continue
+
+    metacount=$(pacman -Ss "${package}" | \
+                grep -c "(.*${package}.*)" || true)
+    installcount=$(pacman -Qs "${package}" | \
+                   grep -c "^local.*(.*${package}.*)$" || true)
+
+    # Check if package is installed.
+    if pacman -Qi "${package}" >/dev/null 2>&1; then
+      show_listitem "${package@Q} package already installed. Skipping."
+
+    # Runs if package is not installed or all members of meta-package are not
+    # installed.
+    else
+      show_listitem "Installing ${package@Q}."
+      if ! [ -d "${pkgbuilddir}/${package}" ]; then
+        git clone "${aurprefix}/${package}" "${pkgbuilddir}/${package}"
+      else
+        git -C "${pkgbuilddir}/${package}" clean -xdf
+        git -C "${pkgbuilddir}/${package}" reset --hard
+        git -C "${pkgbuilddir}/${package}" pull origin master
+      fi
+      cd "${pkgbuilddir}/${package}" || exit
+      makepkg --noconfirm -si
+      git clean -xdf
+    fi
+  done < "${1}"
+  cd "${curdir}" || exit
+}
+
+function sync_repos {
+  show_header "Synchronizing repos."
+  if [ ${EUID} -eq 0 ]; then
+    pacman -Sy
+  else
+    sudo pacman -Sy
+  fi
+}
+
+function install_post_dependencies {
+  show_header "Checking post-installation dependencies."
+  local package
+  while read -r package; do
+    if ! pacman -Qi "${package}" > /dev/null 2>&1; then
+      show_info "${package@Q} is needed for this script."
+      sudo pacman -S --noconfirm "${package}"
+      check_fail $?
+      show_success "${package@Q} now installed."
+    else
+      show_success "${package@Q} is already installed."
+    fi
+  done < "${deps}"
+}
+
+function install_dependencies {
+  show_header "Checking installation dependencies."
+
+  local state=true
+  local exe
+  while read -r exe; do
+    if ! command -v "${exe}" >/dev/null; then
+      state=false
+    fi
+  done < "${install}"
+  if "${state}"; then return; fi
+
+  pacman -Sy --noconfirm archlinux-keyring
+
+  local package
+  while read -r package; do
+    if ! pacman -Qi "${package}" > /dev/null 2>&1; then
+      show_info "${package@Q} is needed for this script."
+      pacman -S --noconfirm "${package}"
+      check_fail $?
+      show_success "${package@Q} now installed."
+    else
+      show_success "${package@Q} is already installed."
+    fi
+  done < "${install}"
+}
+
+function check_network {
+  show_header "Checking network connection."
+
+  if wget -q --tries=10 --timeout=20 --spider https://archlinux.org >/dev/null; then
+    show_success "Network is working."
+  else
+    show_error "Cannot start network connection."
+    exit 1
+  fi
+}
+
+function set_config_key_value {
+  local file="${1}"
+  local key="${2}"
+  local value="${3}"
+
+  if [ -f "${file}" ]; then
+    if grep -q "^${key}" "${file}"; then
+      sed -i "s/^${key}=.*/${key}=${value}/g" "${file}"
+    else
+      echo "${key}=${value}" >> "${file}"
+    fi
+  else
+    show_warning "${file@Q} does not exist. Creating new."
+    mkdir -p "$(dirname "${file}")"
+    echo "${key}=${value}" > "${file}"
+  fi
+}
