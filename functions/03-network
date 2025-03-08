@@ -1,0 +1,177 @@
+#! /bin/bash
+
+# Arch Linux (post-)install scripts
+# Copyright (C) 2020
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+
+dir="$(dirname "$0")"
+
+networking="${dir}/packages/network.list"
+nmconf="/etc/NetworkManager/NetworkManager.conf"
+function install_network {
+  show_header "Setting up networking."
+  check_installed "${networking}"
+  check_fail
+  show_success "Networking applications installed."
+
+  show_info "Setting up MAC address randomization in Network Manager."
+  if ! test "$(grep "mac-address=random" ${nmconf})"; then
+    sudo sh -c "echo "" >> ${nmconf}"
+    sudo sh -c "echo '# Enabling built-in MAC Address randomization' >> ${nmconf}"
+    sudo sh -c "echo '[connection-mac-randomization]' >> ${nmconf}"
+    sudo sh -c "echo 'wifi.cloned-mac-address=random' >> ${nmconf}"
+    sudo sh -c "echo 'ethernet.cloned-mac-address=random' >> ${nmconf}"
+  fi
+
+  show_info "Enabling NetworkManager service"
+  sudo systemctl enable --now NetworkManager
+
+  show_info "Disabling SSH root login and forcing SSH v2."
+  sudo sed -i \
+    -e "/^#PermitRootLogin prohibit-password$/a PermitRootLogin no" \
+    -e "/^#Port 22$/i Protocol 2" \
+    /etc/ssh/sshd_config
+}
+
+discovery="${dir}/packages/discover.list"
+nsconf="/etc/nsswitch.conf"
+function install_discovery {
+  show_header "Setting up local network discovery."
+  check_installed "${discovery}"
+  check_fail
+  show_success "Discovery applications installed."
+
+  show_info "Enabling local hostname resolution in Avahi."
+  local oldhostsline="hosts: files mymachines myhostname resolve \[!UNAVAIL=return\] dns"
+  local newhostsline="hosts: files mymachines myhostname mdns_minimal \[NOTFOUND=return\] resolve \[!UNAVAIL=return\] dns"
+  sudo sed -i "/^${oldhostsline}/s/^${oldhostsline}/${newhostsline}/g" ${nsconf}
+  sudo systemctl enable avahi-daemon.service
+  sudo systemctl start avahi-daemon.service
+}
+
+firewall="${dir}/packages/firewall.list"
+function install_firewall {
+  show_header "Setting up firewall."
+  check_installed "${firewall}"
+  check_fail
+  show_success "Firewall packages installed."
+
+  show_info "Setting ufw firewall rules."
+  sudo ufw default deny
+
+  if pacman -Qi syncthing >/dev/null 2>&1; then
+    sudo ufw allow syncthing
+    sudo ufw allow syncthing-gui
+  fi
+
+  if pacman -Qi kdeconnect >/dev/null 2>&1; then
+    sudo ufw allow 'KDE Connect'
+  fi
+
+  if pacman -Qi transmission-cli >/dev/null 2>&1; then
+    sudo ufw allow Transmission
+  elif pacman -Qi transmission-qt >/dev/null 2>&1; then
+    sudo ufw allow Transmission
+  elif pacman -Qi transmission-gtk >/dev/null 2>&1; then
+    sudo ufw allow Transmission
+  fi
+
+  show_info "Enabling ufw."
+  sudo ufw enable
+  sudo systemctl enable ufw
+}
+
+tor="${dir}/packages/tor.list"
+function install_tor {
+  show_header "Installing Tor programs."
+  check_installed "${tor}"
+  check_fail
+  show_success "Tor installed."
+
+  show_info "Enabling and starting tor service."
+  sudo systemctl enable tor
+  sudo systemctl start tor
+}
+
+# pacmanconf="/etc/pacman.conf"
+function tunnel_pacman_tor {
+  show_header "Tunneling pacman through tor."
+  # if ! pacman -Qi tor > /dev/null 2>&1; then
+  #   show_warning "Tor not installed. Skipping."
+  # elif ! [[ $(systemctl is-active tor) == "active" ]]; then
+  #   show_warning "Tor systemd unit is not active. Skipping."
+  # else
+  #   sudo cp ${pacmanconf} ${pacmanconf}.${RANDOM}.bak
+  #   sudo sed -i "s,^#XferCommand = /usr/bin/curl .*,XferCommand = /usr/bin/curl --socks5-hostname localhost:9050 -C - -f %u > %o,g" ${pacmanconf}
+  #   sudo pacman -Syy
+  #   show_success "Done."
+  # fi
+  show_warning "Disabled. Pacman will time-out, causing upgrades to fail."
+}
+
+function 03-network {
+  show_question "Network: what do you want to install?"
+  show_info "Main\n ${endbranch} Network (Hit ENTER to see options again.)"
+
+  local options=(
+    "Back"
+    "All"
+    "Networking"
+    "Local discovery"
+    "Firewall"
+    "Install Tor"
+    "Tunnel pacman over Tor")
+  local option
+  select option in "${options[@]}"; do
+    case "${option}" in
+      "Back")
+        break
+        ;;
+      "All")
+        install_network
+        install_discovery
+        install_firewall
+        install_tor
+        tunnel_pacman_tor
+        show_info "Main\n ${endbranch} Network (Hit ENTER to see options again.)"
+        ;;
+      "Networking")
+        install_network
+        show_info "Main\n ${endbranch} Network (Hit ENTER to see options again.)"
+        ;;
+      "Local discovery")
+        install_discovery
+        show_info "Main\n ${endbranch} Network (Hit ENTER to see options again.)"
+        ;;
+      "Firewall")
+        install_firewall
+        show_info "Main\n ${endbranch} Network (Hit ENTER to see options again.)"
+        ;;
+      "Install Tor")
+        install_tor
+        show_info "Main\n ${endbranch} Network (Hit ENTER to see options again.)"
+        ;;
+      "Tunnel pacman over Tor")
+        tunnel_pacman_tor
+        show_info "Main\n ${endbranch} Network (Hit ENTER to see options again.)"
+        ;;
+      *)
+        show_warning "Invalid option."
+        ;;
+    esac
+  done
+}
