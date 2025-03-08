@@ -1,0 +1,438 @@
+#! /bin/bash
+
+# Arch Linux (post-)install scripts
+# Copyright (C) 2020
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+
+dir="$(dirname "$0")"
+
+npmrc="${dir}/dotfiles/npmrc"
+themes="${dir}/packages/themes.list"
+function install_theme_deps_gtk {
+  show_header "Installing theme dependencies."
+  check_installed "${themes}"
+  check_fail
+  show_success "Theme dependencies installed."
+
+  if ! [ -f "${npmrc}" ]; then
+    show_info "Installing npmrc."
+    cp -f "${npmrc}" "${HOME}/.npmrc"
+  fi
+}
+
+themeskde="${dir}/packages/themes-kde.list"
+function install_theme_deps_kde {
+  show_header "Installing KDE theme dependencies."
+  check_installed "${themeskde}"
+  check_fail
+  show_success "Theme dependencies installed."
+}
+
+function install_arc_gtk {
+  show_header "Downloading, building, and installing the Arc GTK theme."
+  local meson_options=""
+  local meson_gresource="false"
+  local tmpdir
+  if pacman -Qi gnome-shell >/dev/null 2>&1; then
+    meson_options="${meson_options}gnome-shell,"
+    meson_gresource="true"
+  fi
+  if pacman -Qi cinnamon >/dev/null 2>&1; then
+    meson_options="${meson_options}cinnamon,"
+    meson_gresource="true"
+  fi
+  if pacman -Qi gtk2 >/dev/null 2>&1; then
+    meson_options="${meson_options}gtk2,"
+  fi
+  if pacman -Qi gtk3 >/dev/null 2>&1; then
+    meson_options="${meson_options}gtk3,"
+  fi
+  if pacman -Qi gtk4 >/dev/null 2>&1; then
+    meson_options="${meson_options}gtk4,"
+  fi
+  if pacman -Qi metacity >/dev/null 2>&1; then
+    meson_options="${meson_options}metacity,"
+  fi
+  if pacman -Qi plank >/dev/null 2>&1; then
+    meson_options="${meson_options}plank,"
+  fi
+  if pacman -Qi xfwm4 >/dev/null 2>&1; then
+    meson_options="${meson_options}xfwm,"
+  fi
+  meson_options="${meson_options%,}"
+  tmpdir="$(mktemp -d)"
+  git clone -b tweak --depth 1 \
+    https://github.com/sudorook/arc-theme.git "${tmpdir}"
+  pushd "${tmpdir}" >/dev/null || exit
+  meson setup --prefix=/usr \
+    -Dtransparency=true \
+    -Dgnome_shell_gresource="${meson_gresource}" \
+    -Dthemes="${meson_options}" \
+    _build/
+  meson compile -C _build/
+  sudo meson install -C _build/
+  popd >/dev/null || exit
+  rm -rf "${tmpdir}"
+  show_success "Arc theme installed."
+}
+
+function install_arc_kde {
+  show_header "Downloading, building, and installing the Arc KDE theme."
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  git clone -b tweak --depth 1 \
+    https://github.com/sudorook/arc-kde.git "${tmpdir}"
+  pushd "${tmpdir}" >/dev/null || exit
+  sudo make install
+  popd >/dev/null || exit
+  rm -rf "${tmpdir}"
+  show_success "Arc KDE theme installed."
+}
+
+function install_adapta_gtk {
+  show_header "Downloading, building, and installing the Adapta GTK theme."
+  local autotools_options=
+  local tmpdir
+  if ! pacman -Qi gnome-shell > /dev/null 2>&1; then
+    autotools_options="${autotools_options} --disable-gnome "
+  fi
+  if ! pacman -Qi gnome-flashback > /dev/null 2>&1; then
+    autotools_options="${autotools_options} --disable-flashback "
+  fi
+  if ! pacman -Qi cinnamon > /dev/null 2>&1; then
+    autotools_options="${autotools_options} --disable-cinnamon "
+  fi
+  if ! pacman -Qi marco > /dev/null 2>&1; then
+    autotools_options="${autotools_options} --disable-mate "
+  fi
+  if ! pacman -Qi openbox > /dev/null 2>&1; then
+    autotools_options="${autotools_options} --disable-openbox "
+  fi
+  if ! pacman -Qi xfce4-session > /dev/null 2>&1; then
+    autotools_options="${autotools_options} --disable-xfce "
+  fi
+  tmpdir="$(mktemp -d)"
+  git clone -b tweak --depth 1 \
+    https://github.com/sudorook/adapta-gtk-theme.git "${tmpdir}"
+  pushd "${tmpdir}" >/dev/null || exit
+  ./autogen.sh \
+    --prefix=/usr \
+    --with-selection_color="#00A2B4" \
+    --with-accent_color="#00B4CB" \
+    --with-suggestion_color="#00A2B4" \
+    --with-destruction_color="#F44336" \
+    ${autotools_options} \
+    --enable-parallel
+  make -j"$(nproc)"
+  sudo make install
+  if [ -d /usr/share/gtksourceview-4/styles/ ]; then
+    sudo cp -f extra/gedit/adapta.xml /usr/share/gtksourceview-4/styles/
+  fi
+  if [ -d /usr/share/gtksourceview-3.0/styles/ ]; then
+    sudo cp -f extra/gedit/adapta.xml /usr/share/gtksourceview-3.0/styles/
+  fi
+  popd >/dev/null || exit
+  rm -rf "${tmpdir}"
+  show_success "Adapta theme installed."
+}
+
+function install_plata_gtk {
+  show_header "Downloading, building, and installing the Plata GTK theme."
+  local autotools_options=
+  local tmpdir
+  if ! pacman -Qi gnome-shell > /dev/null 2>&1; then
+    autotools_options="${autotools_options} --disable-gnome "
+  fi
+  if ! pacman -Qi gnome-flashback > /dev/null 2>&1; then
+    autotools_options="${autotools_options} --disable-flashback "
+  fi
+  if ! pacman -Qi cinnamon > /dev/null 2>&1; then
+    autotools_options="${autotools_options} --disable-cinnamon "
+  fi
+  if ! pacman -Qi marco > /dev/null 2>&1; then
+    autotools_options="${autotools_options} --disable-mate "
+  fi
+  if ! pacman -Qi openbox > /dev/null 2>&1; then
+    autotools_options="${autotools_options} --disable-openbox "
+  fi
+  if ! pacman -Qi xfce4-session > /dev/null 2>&1; then
+    autotools_options="${autotools_options} --disable-xfce "
+  fi
+  tmpdir="$(mktemp -d)"
+  git clone -b tweak --depth 1 \
+    https://gitlab.com/sudorook/plata-theme.git "${tmpdir}"
+  pushd "${tmpdir}" >/dev/null || exit
+  ./autogen.sh --prefix=/usr \
+    --with-selection_color="#4877B1" \
+    --with-accent_color="#4877B1" \
+    --with-suggestion_color="#5294E2" \
+    --with-destruction_color="#F44336" \
+    ${autotools_options} \
+    --enable-gtk_next \
+    --enable-parallel
+  make -j"$(nproc)"
+  sudo make install
+  if [ -d /usr/share/gtksourceview-4/styles/ ]; then
+    sudo cp -f src/extra/gtksourceview/plata-light.xml \
+      src/extra/gtksourceview/plata-dark.xml \
+      /usr/share/gtksourceview-4/styles/
+  fi
+  if [ -d /usr/share/gtksourceview-3.0/styles/ ]; then
+    sudo cp -f src/extra/gtksourceview/plata-light.xml \
+      src/extra/gtksourceview/plata-dark.xml \
+      /usr/share/gtksourceview-3.0/styles/
+  fi
+  popd >/dev/null || exit
+  rm -rf "${tmpdir}"
+  show_success "Plata theme installed."
+}
+
+function install_materia_gtk {
+  local tmpdir
+  show_header "Downloading, building, and installing the Materia GTK theme."
+  tmpdir="$(mktemp -d)"
+  git clone -b tweak --depth 1 \
+    https://github.com/sudorook/materia-theme.git "${tmpdir}"
+  pushd "${tmpdir}" >/dev/null || exit
+  mkdir -p _build
+  meson setup -Dprefix=/usr _build
+  meson compile -C _build
+  sudo meson install -C _build
+  popd >/dev/null || exit
+  rm -rf "${tmpdir}"
+  show_success "Materia theme installed."
+}
+
+function install_materia_kde {
+  local tmpdir
+  show_header "Downloading, building, and installing the Materia KDE theme."
+  tmpdir="$(mktemp -d)"
+  git clone -b tweak --depth 1 \
+    https://github.com/sudorook/materia-kde.git "${tmpdir}"
+  pushd "${tmpdir}" >/dev/null || exit
+  sudo make install
+  popd >/dev/null || exit
+  rm -rf "${tmpdir}"
+  show_success "Materia KDE theme installed."
+}
+
+fonts="${dir}/packages/fonts.list"
+function install_fonts {
+  local tmpdir
+  show_header "Installing fonts."
+  check_installed "${fonts}"
+  check_fail
+  show_success "Fonts installed."
+
+  show_info "Setting nerd font config."
+  if ! [ -d /etc/fonts/conf.d ]; then
+    show_warning "'/etc/fonts/conf.d' for fontconfig is missing. Skipping."
+  elif ! [ -e /etc/fonts/conf.d/10-nerd-font-symbols.conf ]; then
+    sudo ln -s \
+      /usr/share/fontconfig/conf.avail/10-nerd-font-symbols.conf \
+      /etc/fonts/conf.d/
+  fi
+
+  show_info "Downloading Jambo fonts."
+  tmpdir="$(mktemp -d)"
+  git clone --depth 1 https://github.com/sudorook/fonts-jambo.git "${tmpdir}"
+  pushd "${tmpdir}" >/dev/null || exit
+  ./install
+  popd >/dev/null || exit
+  rm -rf "${tmpdir}"
+}
+
+function install_papirus_icons {
+  show_header "Downloading and installing the Papirus icon theme."
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  git clone -b tweak --depth 1 \
+    https://github.com/sudorook/papirus-icon-theme.git "${tmpdir}"
+  pushd "${tmpdir}" >/dev/null || exit
+  sudo make PREFIX=/usr -j"$(nproc)" install
+  popd >/dev/null || exit
+  rm -rf "${tmpdir}"
+}
+
+function install_colorific_themes {
+  show_header "Installing themes for alacritty, gitk, kitty, Neovim, tmux, and Vim."
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  git clone --depth 1 https://github.com/sudorook/colorific.vim.git "${tmpdir}"
+  pushd "${tmpdir}" >/dev/null || exit
+  ./install
+  popd >/dev/null || exit
+  rm -rf "${tmpdir}"
+  show_success "Themes installed."
+}
+
+thunderbirdprofile="${HOME}/.thunderbird/profiles.ini"
+function install_thunderbird_theme {
+  local thunderbird
+  if [ -f "${thunderbirdprofile}" ]; then
+    thunderbird="$(grep -A 1 "^\[Install" "${thunderbirdprofile}" | \
+                   sed -n "s/^Default=\(.*\)/\1/p")"
+  else
+    show_warning "Thunderbird profile missing. Skipping."
+    return
+  fi
+
+  show_header "Installing Monterail theme for Thunderbird."
+  if [ -d "${HOME}/.thunderbird/${thunderbird}/chrome" ]; then
+    show_info "'${thunderbird}/chrome' already exists. Backing up and replacing."
+    mv "${HOME}/.thunderbird/${thunderbird}/chrome" \
+      "${HOME}/.thunderbird/${thunderbird}/chrome.$(date +%Y%m%d-%H%M%S).bak"
+  fi
+
+  git clone \
+    https://github.com/spymastermatt/thunderbird-monterail.git \
+    "${HOME}/.thunderbird/${thunderbird}/chrome"
+  show_info "Enable legacy stylesheets in Thunderbird config editor:"
+  show_info "  toolkit.legacyUserProfileCustomizations.stylesheets = true"
+
+  local userchrome=${HOME}/.thunderbird/${thunderbird}/chrome/userChrome.css
+  sed -i 's|^\(\s*\)/\*--default-font: var(--light-sans-font); .*$|\1--default-font: var(--system-font);|g' "${userchrome}"
+  show_success "Done."
+}
+
+function install_timed_backgrounds {
+  show_header "Installing timed backgrounds."
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  git clone --depth 1 \
+    https://github.com/sudorook/timed-backgrounds.git "${tmpdir}"
+  pushd "${tmpdir}" >/dev/null || exit
+  ./autogen.sh
+  make -j"$(nproc)"
+  sudo make install
+  popd >/dev/null || exit
+  rm -rf "${tmpdir}"
+  show_success "Backgrounds installed."
+}
+
+qt5ctconf="${dir}/configs/qt5ct.conf"
+qt6ctconf="${dir}/configs/qt5ct.conf"  # re-use qt5ct config for qt6ct
+function set_qtcompat {
+  show_info "Copying qt5ct and qt6ct configs."
+  mkdir -p "${HOME}/.config/qt5ct" "${HOME}/.config/qt6ct"
+  cp -f "${qt5ctconf}" "${HOME}/.config/qt5ct/"
+  cp -f "${qt6ctconf}" "${HOME}/.config/qt6ct/"
+  export QT_QPA_PLATFORMTHEME=qt5ct
+  set_config_key_value "${HOME}/.xprofile" "export QT_QPA_PLATFORMTHEME" "qt5ct"
+}
+
+function 04-themes {
+  show_question "Themes: what do you want to install?"
+  show_info "Main\n ${endbranch} Themes (Hit ENTER to see options again.)"
+
+  local options=(
+    "Back"
+    "All"
+    "Arc (GTK)"
+    "Arc (KDE)"
+    "Adapta (GTK)"
+    "Plata (GTK)"
+    "Materia (GTK)"
+    "Materia (KDE)"
+    "Fonts"
+    "Papirus (icons)"
+    "Colorific themes"
+    "Thunderbird theme"
+    "Timed backgrounds")
+  local option
+  select option in "${options[@]}"; do
+    case "${option}" in
+      "Back")
+        break
+        ;;
+      "All")
+        install_theme_deps_gtk
+        install_theme_deps_kde
+        install_arc_gtk
+        install_arc_kde
+        install_adapta_gtk
+        install_plata_gtk
+        install_materia_gtk
+        install_materia_kde
+        install_fonts
+        install_papirus_icons
+        install_colorific_themes
+        install_thunderbird_theme
+        install_timed_backgrounds
+        set_qtcompat
+        show_info "Main\n ${endbranch} Themes (Hit ENTER to see options again.)"
+        ;;
+      "Arc (GTK)")
+        install_theme_deps_gtk
+        install_arc_gtk
+        set_qtcompat
+        show_info "Main\n ${endbranch} Themes (Hit ENTER to see options again.)"
+        ;;
+      "Arc (KDE)")
+        install_theme_deps_kde
+        install_arc_kde
+        show_info "Main\n ${endbranch} Themes (Hit ENTER to see options again.)"
+        ;;
+      "Adapta (GTK)")
+        install_theme_deps_gtk
+        install_adapta_gtk
+        set_qtcompat
+        show_info "Main\n ${endbranch} Themes (Hit ENTER to see options again.)"
+        ;;
+      "Plata (GTK)")
+        install_theme_deps_gtk
+        install_plata_gtk
+        set_qtcompat
+        show_info "Main\n ${endbranch} Themes (Hit ENTER to see options again.)"
+        ;;
+      "Materia (GTK)")
+        install_theme_deps_gtk
+        install_materia_gtk
+        set_qtcompat
+        show_info "Main\n ${endbranch} Themes (Hit ENTER to see options again.)"
+        ;;
+      "Materia (KDE)")
+        install_theme_deps_kde
+        install_materia_kde
+        show_info "Main\n ${endbranch} Themes (Hit ENTER to see options again.)"
+        ;;
+      "Fonts")
+        install_fonts
+        show_info "Main\n ${endbranch} Themes (Hit ENTER to see options again.)"
+        ;;
+      "Papirus (icons)")
+        install_papirus_icons
+        show_info "Main\n ${endbranch} Themes (Hit ENTER to see options again.)"
+        ;;
+      "Colorific themes")
+        install_colorific_themes
+        show_info "Main\n ${endbranch} Themes (Hit ENTER to see options again.)"
+        ;;
+      "Thunderbird theme")
+        install_thunderbird_theme
+        show_info "Main\n ${endbranch} Themes (Hit ENTER to see options again.)"
+        ;;
+      "Timed backgrounds")
+        install_timed_backgrounds
+        show_info "Main\n ${endbranch} Themes (Hit ENTER to see options again.)"
+        ;;
+      *)
+        show_warning "Invalid option."
+        ;;
+    esac
+  done
+}
