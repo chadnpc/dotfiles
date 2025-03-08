@@ -1,0 +1,199 @@
+#! /bin/bash
+
+# Arch Linux (post-)install scripts
+# Copyright (C) 2020
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along
+# with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+
+
+dir="$(dirname "$0")"
+
+gnome="${dir}/packages/gnome.list"
+xdgdefaultconf="/etc/xdg/user-dirs.defaults"
+function install_gnome {
+  show_header "Setting up GNOME desktop environment."
+  check_installed "${gnome}"
+  check_fail
+  show_success "GNOME installed."
+
+  if ! test ${DESKTOP_SESSION+x}; then
+    export DESKTOP_SESSION="gnome"
+  fi
+
+  show_info "Setting up GDM greeter."
+  sudo systemctl enable gdm.service
+
+  extensiondir=${HOME}/.local/share/gnome-shell/extensions
+  mkdir -p "${extensiondir}"
+  show_info "Downloading 'Desktop Icons' GNOME extension."
+  git clone https://gitlab.com/rastersoft/desktop-icons-ng.git \
+    "${HOME}/.local/share/gnome-shell/extensions/ding@rastersoft.com"
+
+  show_info "Setting kitty as default terminal."
+  gsettings set org.gnome.desktop.default-applications.terminal exec 'kitty'
+
+  show_info "Creating Projects/ and Sync/ and setting gvfs icon metadata."
+  mkdir -p "${HOME}/Projects"
+  mkdir -p "${HOME}/Sync"
+  gio set "${HOME}/Projects/" -t string metadata::custom-icon-name folder-development
+  gio set "${HOME}/Sync/" -t string metadata::custom-icon-name folder-cloud
+
+  show_info "Disabling Templates/ and Public/ directories."
+  sudo sed -i "s/^TEMPLATES/#TEMPLATES/g" "${xdgdefaultconf}"
+  sudo sed -i "s/^PUBLICSHARE/#PUBLICSHARE/g" "${xdgdefaultconf}"
+  [ -d "${HOME}/Templates" ] && rmdir --ignore-fail-on-non-empty "${HOME}/Templates"
+  [ -d "${HOME}/Public" ] && rmdir --ignore-fail-on-non-empty "${HOME}/Public"
+  xdg-user-dirs-update
+}
+
+cinnamon="${dir}/packages/cinnamon.list"
+lightdmconf="/etc/lightdm/lightdm.conf"
+gammastepini="${dir}/configs/gammastep.ini"
+xdgdefaultconf="/etc/xdg/user-dirs.defaults"
+function install_cinnamon {
+  show_header "Setting up cinnamon desktop environment."
+  check_installed "${cinnamon}"
+  check_fail
+  show_success "Cinnamon installed."
+
+  if ! test ${DESKTOP_SESSION+x}; then
+    export DESKTOP_SESSION="cinnamon"
+  fi
+
+  show_info "Setting up LightDM greeter."
+  sudo sed -i \
+    "s/^#greeter-hide-users=false/greeter-hide-users=false/g" \
+    "${lightdmconf}"
+  sudo sed -i \
+    "s/^#greeter-session=.*/greeter-session=lightdm-gtk-greeter/g" \
+    "${lightdmconf}"
+  sudo systemctl enable lightdm.service
+
+  # Get latitude and longitude using GeoClue2 for Gammastep.
+  show_info "Setting Gammastep config."
+  if [ -e /usr/lib/geoclue-2.0/demos/where-am-i ]; then
+    mkdir -p "${HOME}/.config/gammastep"
+    local tmp
+    local lat
+    local lon
+    tmp="$(/usr/lib/geoclue-2.0/demos/where-am-i -t 10 -a 4)"
+    if [[ -n "${tmp}" ]]; then
+      lat="$(echo "${tmp}" | sed -n "s/.*Latitude: \+\([-0-9\.]\+\)°\?.*/\1/p")"
+      lon="$(echo "${tmp}" | sed -n "s/.*Longitude: \+\([-0-9\.]\+\)°\?.*/\1/p")"
+      sed -e "s,^lat=.*,lat=${lat},g" -e "s,^lon=.*,lon=${lon},g" \
+        "${gammastepini}" > "${HOME}/.config/gammastep/config.ini"
+    else
+      show_warning "Parsing latitude/longitude failed. Defaulting to NYC."
+      cp "${gammastepini}" "${HOME}/.config/gammastep/config.ini"
+    fi
+  else
+    show_warning "Geoclue 'where-am-i' demo not found. Default to NYC."
+    cp "${gammastepini}" "${HOME}/.config/gammastep/config.ini"
+  fi
+
+  show_info "Setting kitty as default terminal."
+  gsettings set org.cinnamon.desktop.default-applications.terminal exec 'kitty'
+
+  show_info "Creating Projects/ and Sync/ and setting gvfs icon metadata."
+  mkdir -p "${HOME}/Projects"
+  mkdir -p "${HOME}/Sync"
+  gio set "${HOME}/Projects/" -t string metadata::custom-icon-name folder-development
+  gio set "${HOME}/Sync/" -t string metadata::custom-icon-name folder-cloud
+
+  show_info "Disabling Templates/ and Public/ directories."
+  sudo sed -i "s/^TEMPLATES/#TEMPLATES/g" "${xdgdefaultconf}"
+  sudo sed -i "s/^PUBLICSHARE/#PUBLICSHARE/g" "${xdgdefaultconf}"
+  [ -d "${HOME}/Templates" ] && rmdir --ignore-fail-on-non-empty "${HOME}/Templates"
+  [ -d "${HOME}/Public" ] && rmdir --ignore-fail-on-non-empty "${HOME}/Public"
+  xdg-user-dirs-update
+}
+
+kde="${dir}/packages/kde.list"
+xdgdefaultconf="/etc/xdg/user-dirs.defaults"
+function install_kde {
+  show_header "Setting up KDE desktop environment."
+  check_installed "${kde}"
+  check_fail
+  show_success "KDE installed."
+
+  if ! test ${DESKTOP_SESSION+x}; then
+    export DESKTOP_SESSION="plasma"
+  fi
+
+  show_info "Setting up SDDM greeter."
+  sudo systemctl enable sddm.service
+
+  # Set flag to enable KDE dialog boxes for GTK applications.
+  set_config_key_value \
+    "${HOME}/.config/environment.d/envvars.conf" "GTK_USE_PORTAL" "1"
+  set_config_key_value "${HOME}/.xprofile" "export GTK_USE_PORTAL" "1"
+
+  show_info "Setting kitty as default terminal."
+  kwriteconfig5 --file kdeglobals --group "General" --key "TerminalApplication" "kitty"
+  kwriteconfig5 --file kdeglobals --group "General" --key "TerminalService" "kitty.desktop"
+
+  # Add Ctrl+Alt+T launcher for kitty
+  kwriteconfig5 --file kglobalshortcutsrc --group "kitty.desktop" --key "_k_friendly_name" "kitty"
+  kwriteconfig5 --file kglobalshortcutsrc --group "kitty.desktop" --key "_launch" "Ctrl+Alt+T,none,kitty"
+
+  show_info "Creating Projects/ and Sync/ and setting kio icon metadata."
+  mkdir -p "${HOME}/Projects"
+  mkdir -p "${HOME}/Sync"
+  kwriteconfig5 --file "${HOME}/Projects/.directory" --group 'Desktop Entry' --key 'Icon' 'folder-development'
+  kwriteconfig5 --file "${HOME}/Sync/.directory" --group 'Desktop Entry' --key 'Icon' 'folder-cloud'
+
+  show_info "Disabling Templates/ and Public/ directories."
+  sudo sed -i "s/^TEMPLATES/#TEMPLATES/g" "${xdgdefaultconf}"
+  sudo sed -i "s/^PUBLICSHARE/#PUBLICSHARE/g" "${xdgdefaultconf}"
+  [ -d "${HOME}/Templates" ] && rmdir --ignore-fail-on-non-empty "${HOME}/Templates"
+  [ -d "${HOME}/Public" ] && rmdir --ignore-fail-on-non-empty "${HOME}/Public"
+  xdg-user-dirs-update
+}
+
+function 02-desktop {
+  show_question "Desktop: what do you want to install?"
+  show_info "Main\n ${endbranch} Desktop (Hit ENTER to see options again.)"
+
+  local options=("Back" "All" "GNOME" "Cinnamon" "KDE")
+  local option
+  select option in "${options[@]}"; do
+    case "${option}" in
+      "Back")
+        break
+        ;;
+      "All")
+        install_gnome
+        install_cinnamon
+        install_kde
+        show_info "Main\n ${endbranch} Desktop (Hit ENTER to see options again.)"
+        ;;
+      "GNOME")
+        install_gnome
+        show_info "Main\n ${endbranch} Desktop (Hit ENTER to see options again.)"
+        ;;
+      "Cinnamon")
+        install_cinnamon
+        show_info "Main\n ${endbranch} Desktop (Hit ENTER to see options again.)"
+        ;;
+      "KDE")
+        install_kde
+        show_info "Main\n ${endbranch} Desktop (Hit ENTER to see options again.)"
+        ;;
+      *)
+        show_warning "Invalid option."
+        ;;
+    esac
+  done
+}
