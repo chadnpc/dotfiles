@@ -69,6 +69,7 @@ if ($IsWindows) {
 function ll { eza -al --icons=always }
 function gs { git status }
 function ga { git add }
+function uv { & $env:LOCAL_BIN/uv $args }
 function gcom { git commit -m }
 function gpush { git push }
 function gpull { git pull }
@@ -232,6 +233,19 @@ if ([IO.Path]::Exists('/home/alain/.pyenv/bin')) { cliHelper.env\Set-Env -Name P
 
 if (![bool](Get-Command pipenv -ea Ignore)) { Set-Alias pipenv pipEnv\Invoke-PipEnv -Scope Global }
 
+# /home/alain/.local/bin/env
+if ([IO.Path]::Exists('/home/alain/.local/bin/')) {
+  cliHelper.env\Set-Env -Name LOCAL_BIN -Scope 'Machine' -Value "/home/alain/.local/bin/"
+  cliHelper.env\Set-Env -Name PATH -Scope 'Machine' -Value ('{0}{1}{2}' -f $env:PATH, [IO.Path]::PathSeparator, '/home/alain/.local/bin/')
+}
+
+# /home/alain/.local/share/vdhcoapp
+if ([IO.Path]::Exists('/home/alain/.local/share/vdhcoapp/')) {
+  cliHelper.env\Set-Env -Name VDHC_PATH -Scope 'Machine' -Value "/home/alain/.local/share/vdhcoapp/"
+  cliHelper.env\Set-Env -Name PATH -Scope 'Machine' -Value ('{0}{1}{2}' -f $env:PATH, [IO.Path]::PathSeparator, '/home/alain/.local/share/vdhcoapp/')
+}
+
+# curl -sSLf https://github.com/aclap-dev/vdhcoapp/releases/latest/download/install.sh | bash
 if ([IO.Path]::Exists('/home/alain/.bun')) {
   cliHelper.env\Set-Env -Name BUN_INSTALL -Scope 'Machine' -Value "/home/alain/.bun"
   cliHelper.env\Set-Env -Name PATH -Scope 'Machine' -Value ('{0}{1}{2}' -f $env:PATH, [IO.Path]::PathSeparator, '/home/alain/.bun/bin')
