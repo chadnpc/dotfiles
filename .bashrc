@@ -37,3 +37,4 @@ if [ -f ~/.bashrc_custom ] ;then
 fi
 export PATH="$PATH:/home/alain/.local/share/fount/path"
 . "/home/alain/.deno/env"
+. "$HOME/.local/bin/env"
