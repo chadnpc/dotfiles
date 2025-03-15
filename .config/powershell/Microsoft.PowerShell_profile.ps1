@@ -1,7 +1,7 @@
 # ----- Set encoding to UTF-8 -----
 [console]::InputEncoding = [console]::OutputEncoding = New-Object System.Text.UTF8Encoding
 #Requires -RunAsAdministrator
-#Requires -Modules cliHelper.env, Terminal-Icons, posh-git, PowerType, PSReadLine
+#Requires -Modules cliHelper.env, cliHelper.logger, Terminal-Icons, posh-git, PowerType, PSReadLine
 #Requires -Psedition Core
 
 $omp_config = "$PSScriptRoot/alain.omp.json"
