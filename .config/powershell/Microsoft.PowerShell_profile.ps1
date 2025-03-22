@@ -46,12 +46,12 @@ Set-Env PATH -Scope Machine -Value ([string]::Join([IO.Path]::PathSeparator, ${e
 
 # ----- Aliases -----
 Set-Alias v nvim
-Set-Alias l Get-ChildItem
 Set-Alias ls Get-ChildItem
 Set-Alias g git
 Set-Alias lg lazygit
 Set-Alias ld lazydocker
 Set-Alias code cursor
+Set-Alias wcode windsurf
 Set-Alias fetch fastfetch
 Set-Alias c clear
 Set-Alias nf fastfetch
@@ -66,6 +66,9 @@ if ($IsWindows) {
 }
 
 # ----- Functions -----
+function l {
+  Get-ChildItem | Sort-Object -Property LastWriteTime
+}
 function ll { eza -al --icons=always }
 function gs { git status }
 function ga { git add }
