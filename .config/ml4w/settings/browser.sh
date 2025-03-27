@@ -1,1 +1,1 @@
-zen-browser
+google-chrome-stable
