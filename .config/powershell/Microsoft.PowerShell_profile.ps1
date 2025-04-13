@@ -67,7 +67,16 @@ if ($IsWindows) {
 
 # ----- Functions -----
 function l {
-  Get-ChildItem | Sort-Object -Property LastWriteTime
+  # .SYNOPSIS
+  #   Wrapper around  Get-ChildItem
+  # .DESCRIPTION
+  #   It uses the same param dictionary, so its like an alias function.
+  # .NOTES
+  #   Get-ChildItem -? for more usage.
+  [CmdletBinding()]
+  param ([Parameter(Mandatory = $false, ValueFromRemainingArguments = $true)] $arglist)
+  $argline = $PSBoundParameters.Count -gt 0 ? ($PSBoundParameters.Values.ToArray() -join ' ') : [string]::Empty
+  return [scriptblock]::Create("Get-ChildItem $argline | Sort-Object -Property LastWriteTime").Invoke()
 }
 function ll { eza -al --icons=always }
 function gs { git status }
