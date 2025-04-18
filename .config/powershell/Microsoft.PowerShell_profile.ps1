@@ -44,27 +44,6 @@ if ($IsWindows) {
 }
 Set-Env PATH -Scope Machine -Value ([string]::Join([IO.Path]::PathSeparator, ${env:PATH}, [IO.Path]::Combine(${HOME}, ".dotnet/tools")))
 
-# ----- Aliases -----
-Set-Alias v nvim
-Set-Alias ls Get-ChildItem
-Set-Alias g git
-Set-Alias lg lazygit
-Set-Alias ld lazydocker
-Set-Alias code cursor
-Set-Alias wcode windsurf
-Set-Alias fetch fastfetch
-Set-Alias c clear
-Set-Alias nf fastfetch
-Set-Alias ff fastfetch
-Set-Alias wifi nmtui
-Set-Alias files nautilus
-
-if ($IsWindows) {
-  Set-Alias grep findstr
-  Set-Alias tig 'C:\Program Files\Git\usr\bin\tig.exe'
-  Set-Alias less 'C:\Program Files\Git\usr\bin\less.exe'
-}
-
 # ----- Functions -----
 function l {
   # .SYNOPSIS
@@ -78,6 +57,15 @@ function l {
   $argline = $PSBoundParameters.Count -gt 0 ? ($PSBoundParameters.Values.ToArray() -join ' ') : [string]::Empty
   return [scriptblock]::Create("Get-ChildItem $argline | Sort-Object -Property LastWriteTime").Invoke()
 }
+function Invoke-MediaPlayLoop ([string]$dir = (Resolve-Path .).Path, [int]$count = 2) {
+  $c = 0
+  do {
+    $c++
+    Write-Verbose "Playing [mpvloop] [$c/$count]"
+    mpv --no-audio-display $dir
+  } until ($c -eq $count)
+}
+
 function ll { eza -al --icons=always }
 function gs { git status }
 function ga { git add }
@@ -230,6 +218,31 @@ function Invoke-Recorder {
     Clear-Host
   }
 }
+
+
+# ----- Aliases -----
+Set-Alias v nvim
+Set-Alias ls Get-ChildItem
+Set-Alias g git
+Set-Alias lg lazygit
+Set-Alias ld lazydocker
+Set-Alias code cursor
+Set-Alias wcode windsurf
+Set-Alias fetch fastfetch
+Set-Alias c clear
+Set-Alias nf fastfetch
+Set-Alias ff fastfetch
+Set-Alias wifi nmtui
+Set-Alias files nautilus
+Set-Alias mpvloop Invoke-MediaPlayLoop
+
+if ($IsWindows) {
+  Set-Alias grep findstr
+  Set-Alias tig 'C:\Program Files\Git\usr\bin\tig.exe'
+  Set-Alias less 'C:\Program Files\Git\usr\bin\less.exe'
+}
+
+# ----- _init_ -----
 
 if ($_cfg.UseZoxide) {
   [ScriptBlock]::Create([string]::join("`n", @(& zoxide init powershell))).Invoke()
